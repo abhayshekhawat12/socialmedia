@@ -1,0 +1,400 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String         @id @default(uuid())
+  walletAddress String         @unique
+  nonce         String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  profile       Profile?
+  wallets       Wallet[]
+}
+
+model Wallet {
+  id            String   @id @default(uuid())
+  walletAddress String   @unique
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectedAt   DateTime @default(now())
+  lastUsed      DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Profile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username      String   @unique
+  displayName   String
+  bio           String   @default("")
+  avatarUrl     String   @default("")
+  bannerUrl     String   @default("")
+  avatarCid     String   @default("")
+  web3ProfileId String   @default("")
+  totalTips     Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Post {
+  id            String               @id @default(uuid())
+  authorAddress String
+  caption       String
+  mediaUrl      String
+  mediaCid      String
+  mediaType     String               @default("image") // image | video
+  location      String               @default("")
+  privacy       String               @default("public") // public | private | followers
+  contentHash   String               @unique
+  onChainDnaId  Int                  @default(0)
+  isNft         Boolean              @default(false)
+  nftTokenId    Int?
+  nftTxHash     String?
+  likeCount     Int                  @default(0)
+  commentCount  Int                  @default(0)
+  shareCount    Int                  @default(0)
+  viewsCount    Int                  @default(0)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  comments      Comment[]
+  likes         Like[]
+  nfts          NFT[]
+  verifications ContentVerification[]
+  shares        Share[]
+  views         View[]
+  analytics     Analytics?
+
+  @@index([authorAddress])
+  @@index([createdAt])
+}
+
+model Comment {
+  id            String   @id @default(uuid())
+  postId        String?
+  post          Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pulseId       String?
+  pulse         Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  authorAddress String
+  content       String
+  commentCid    String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([postId])
+  @@index([pulseId])
+}
+
+model Like {
+  id          String   @id @default(uuid())
+  postId      String?
+  post        Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pulseId     String?
+  pulse       Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  userAddress String
+  createdAt   DateTime @default(now())
+
+  @@unique([postId, userAddress])
+  @@unique([pulseId, userAddress])
+}
+
+model Follow {
+  id               String   @id @default(uuid())
+  followerAddress  String
+  followingAddress String
+  createdAt        DateTime @default(now())
+
+  @@unique([followerAddress, followingAddress])
+  @@index([followerAddress])
+  @@index([followingAddress])
+}
+
+model Notification {
+  id               String   @id @default(uuid())
+  recipientAddress String
+  senderAddress    String
+  type             String   // LIKE | COMMENT | FOLLOW | MENTION | BLOCKCHAIN_TX | NFT_MINT
+  title            String
+  message          String
+  link             String   @default("")
+  read             Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([recipientAddress])
+}
+
+model Media {
+  id        String   @id @default(uuid())
+  cid       String   @unique
+  url       String
+  fileType  String
+  fileSize  Int
+  mimeType  String
+  createdAt DateTime @default(now())
+}
+
+model Hashtag {
+  id        String   @id @default(uuid())
+  tag       String   @unique
+  postCount Int      @default(1)
+  createdAt DateTime @default(now())
+}
+
+model NFT {
+  id              String   @id @default(uuid())
+  postId          String
+  post            Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tokenId         Int      @unique
+  contractAddress String
+  ownerAddress    String
+  metadataCid     String
+  tokenUri        String
+  mintTxHash      String
+  createdAt       DateTime @default(now())
+
+  @@index([ownerAddress])
+}
+
+model BlockchainTransaction {
+  id          String   @id @default(uuid())
+  txHash      String   @unique
+  blockNumber Int      @default(0)
+  fromAddress String
+  toAddress   String
+  type        String   // PROFILE_REGISTRATION | PROOF_REGISTRATION | NFT_MINT
+  status      String   // CONFIRMED | PENDING | FAILED
+  payload     String   @default("")
+  createdAt   DateTime @default(now())
+}
+
+model ContentVerification {
+  id                 String   @id @default(uuid())
+  postId             String
+  post               Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  contentHash        String
+  authorAddress      String
+  txHash             String
+  onChainDnaId       Int      @default(0)
+  verificationStatus String   @default("VERIFIED") // VERIFIED | PENDING | UNVERIFIED
+  verifiedAt         DateTime @default(now())
+
+  @@index([contentHash])
+  @@index([authorAddress])
+}
+
+model Pulse {
+  id                  String   @id @default(uuid())
+  authorAddress       String
+  videoUrl            String
+  videoCid            String   @default("")
+  thumbnailUrl        String   @default("")
+  caption             String
+  hashtags            String   @default("")
+  category            String   @default("Tech")
+  audioTitle          String   @default("Original Sound")
+  audioId             String?
+  audio               Audio?   @relation(fields: [audioId], references: [id])
+  filterName          String?  @default("")
+  location            String   @default("")
+  contentHash         String   @unique
+  privacy             String   @default("Everyone") // Everyone | Followers | Close Friends
+  allowComments       Boolean  @default(true)
+  allowRemix          Boolean  @default(true)
+  allowDownload       Boolean  @default(true)
+  viewsCount          Int      @default(0)
+  likeCount           Int      @default(0)
+  commentCount        Int      @default(0)
+  shareCount          Int      @default(0)
+  saveCount           Int      @default(0)
+  pulseScore          Int      @default(85)
+  authenticScore      Int      @default(94)
+  originalityVerified Boolean  @default(true)
+  remixOfId           String?
+  txHash              String   @default("")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  comments            Comment[]
+  likes               Like[]
+  shares              Share[]
+  views               View[]
+  analytics           Analytics?
+
+  @@index([authorAddress])
+  @@index([pulseScore])
+}
+
+model SavedPulse {
+  id          String   @id @default(uuid())
+  userAddress String
+  pulseId     String
+  folder      String   @default("AI") // AI | Memes | Learning | Inspiration
+  createdAt   DateTime @default(now())
+
+  @@unique([userAddress, pulseId])
+}
+
+model UserSettings {
+  id                      String   @id @default(uuid())
+  walletAddress           String   @unique
+  privateAccount          Boolean  @default(false)
+  whoCanFollow            String   @default("everyone")
+  whoCanMessage           String   @default("everyone")
+  whoCanMention           String   @default("everyone")
+  whoCanTag               String   @default("everyone")
+  storyPrivacy            String   @default("everyone")
+  closeFriends            String   @default("")
+  activityStatus          Boolean  @default(true)
+  readReceipts            Boolean  @default(true)
+  allowDownloads          Boolean  @default(true)
+  allowRemix              Boolean  @default(true)
+  twoFactorEnabled        Boolean  @default(false)
+  muteAllNotifications    Boolean  @default(false)
+  muteDuration            String   @default("off")
+  notificationLikes       Boolean  @default(true)
+  notificationComments    Boolean  @default(true)
+  notificationFollows     Boolean  @default(true)
+  notificationMessages    Boolean  @default(true)
+  notificationMentions    Boolean  @default(true)
+  notificationTags        Boolean  @default(true)
+  notificationPulse       Boolean  @default(true)
+  notificationLive        Boolean  @default(true)
+  notificationDevelopment Boolean  @default(true)
+  notificationCreator     Boolean  @default(true)
+  notificationSecurity    Boolean  @default(true)
+  notificationPush        Boolean  @default(true)
+  sensitiveContent        String   @default("standard")
+  hiddenWords             String   @default("")
+  contentLanguage         String   @default("English")
+  autoplay                Boolean  @default(true)
+  videoQuality            String   @default("auto")
+  creatorModeEnabled      Boolean  @default(false)
+  theme                   String   @default("dark") // dark | light | system
+  reducedMotion           Boolean  @default(false)
+  dataSaver               Boolean  @default(false)
+  trendingNotifications   Boolean  @default(true)
+  aiSuggestions           Boolean  @default(true)
+  trendAlerts             Boolean  @default(true)
+  opportunityAlerts       Boolean  @default(true)
+  bestPostingTimeAlerts   Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model BlockedAccount {
+  id             String   @id @default(uuid())
+  blockerAddress String
+  blockedAddress String
+  type           String   @default("block") // block | restrict | mute
+  createdAt      DateTime @default(now())
+
+  @@unique([blockerAddress, blockedAddress, type])
+  @@index([blockerAddress])
+}
+
+model UserSession {
+  id            String   @id @default(uuid())
+  walletAddress String
+  deviceName    String
+  location      String
+  ipAddress     String   @default("127.0.0.1")
+  isCurrent     Boolean  @default(false)
+  lastActive    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([walletAddress])
+}
+
+model Story {
+  id            String   @id @default(uuid())
+  authorAddress String
+  mediaUrl      String?
+  mediaType     String   // image | video | text
+  textContent   String?
+  textBgColor   String?  @default("#121212")
+  privacy       String   @default("everyone") // everyone | followers | close_friends
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+
+  @@index([authorAddress])
+  @@index([expiresAt])
+}
+
+model Share {
+  id          String   @id @default(uuid())
+  userAddress String
+  postId      String?
+  post        Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pulseId     String?
+  pulse       Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@index([userAddress])
+}
+
+model Audio {
+  id           String   @id @default(uuid())
+  title        String
+  artist       String   @default("Original Audio")
+  url          String
+  duration     Int      @default(15)
+  thumbnailUrl String   @default("")
+  useCount     Int      @default(0)
+  trendGrowth  Float    @default(0.0)
+  status       String   @default("trending") // trending | rising | popular
+  createdAt    DateTime @default(now())
+  pulses       Pulse[]
+}
+
+model Filter {
+  id          String   @id @default(uuid())
+  name        String
+  category    String   // Trending | Beauty | Cinematic | Vintage | Retro | Glow | AI | Funny | Anime | Black & White | Aesthetic
+  previewUrl  String   @default("")
+  isTrending  Boolean  @default(false)
+  useCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model View {
+  id          String   @id @default(uuid())
+  userAddress String?
+  postId      String?
+  post        Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  pulseId     String?
+  pulse       Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@index([userAddress])
+}
+
+model Analytics {
+  id            String   @id @default(uuid())
+  pulseId       String?  @unique
+  pulse         Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  postId        String?  @unique
+  post          Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  viewsCount    Int      @default(0)
+  likesCount    Int      @default(0)
+  sharesCount   Int      @default(0)
+  savesCount    Int      @default(0)
+  commentsCount Int      @default(0)
+  trendScore    Float    @default(0.0)
+  updatedAt     DateTime @updatedAt
+}
+
+model TrendingContent {
+  id          String   @id @default(uuid())
+  type        String   // REEL | HASHTAG | CREATOR | AUDIO | FILTER
+  targetId    String
+  score       Float
+  rank        Int
+  createdAt   DateTime @default(now())
+}
