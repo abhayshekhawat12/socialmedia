@@ -7,6 +7,7 @@ import { useAuth } from "../../lib/authContext";
 import { audioHaptics } from "../../lib/audioHaptics";
 import { GlassChip } from "../../components/ui/GlassChip";
 import { GlassLoader } from "../../components/ui/GlassLoader";
+import { formatRelativeTime } from "../../lib/formatTime";
 
 export default function NotificationsPage() {
   const { account } = useAuth();
@@ -18,13 +19,13 @@ export default function NotificationsPage() {
     if (!account) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/notifications?recipientAddress=${account}`);
+      const res = await fetch(`/api/notifications?userAddress=${account}`);
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.notifications || []);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Fetch notifications error:", e);
     } finally {
       setLoading(false);
     }
@@ -39,13 +40,13 @@ export default function NotificationsPage() {
     audioHaptics.playTap();
     try {
       await fetch("/api/notifications", {
-        method: "PATCH",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipientAddress: account }),
+        body: JSON.stringify({ markAll: true, userAddress: account }),
       });
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     } catch (e) {
-      console.error(e);
+      console.error("Mark read error:", e);
     }
   };
 
@@ -139,53 +140,51 @@ export default function NotificationsPage() {
             </p>
           </div>
         ) : (
-          filteredNotifications.map((item) => (
-            <div
-              key={item.id}
-              className={`p-3.5 sm:p-4 rounded-[24px] glass-card border border-white/80 dark:border-white/10 shadow-sm flex items-center justify-between gap-3 transition ${
-                !item.read ? "border-l-4 border-l-[#00B7FF] shadow-glow-cyan" : ""
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="relative shrink-0">
-                  <div className="w-10 h-10 rounded-full overflow-hidden border border-white/80 p-0.5 bg-gradient-to-tr from-[#00B7FF] to-[#7EDBE8]">
-                    <img
-                      src={
-                        item.senderProfile?.avatarUrl ||
-                        `https://api.dicebear.com/7.x/bottts/svg?seed=${item.senderAddress}`
-                      }
-                      alt="User"
-                      className="w-full h-full object-cover rounded-full bg-white dark:bg-slate-900"
-                    />
-                  </div>
-                  <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full glass-dock shadow-sm flex items-center justify-center">
-                    {getIcon(item.type)}
-                  </div>
-                </div>
+          filteredNotifications.map((item) => {
+            const actorProf = item.actorProfile || item.senderProfile;
+            const actorName = actorProf?.displayName || actorProf?.username || "Someone";
+            const actorAvatar = actorProf?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${item.senderAddress || item.actorAddress}`;
 
-                <div className="flex flex-col min-w-0">
-                  <p className="text-xs text-slate-800 dark:text-slate-200 leading-snug font-medium">
-                    <span className="font-black text-slate-900 dark:text-white mr-1">
-                      {item.senderProfile?.displayName || item.senderProfile?.username || "Someone"}
+            return (
+              <div
+                key={item.id}
+                className={`p-3.5 sm:p-4 rounded-[24px] glass-card border border-white/80 dark:border-white/10 shadow-sm flex items-center justify-between gap-3 transition ${
+                  !item.read ? "border-l-4 border-l-[#00B7FF] shadow-glow-cyan" : ""
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative shrink-0">
+                    <div className="w-10 h-10 rounded-full overflow-hidden border border-white/80 p-0.5 bg-gradient-to-tr from-[#00B7FF] to-[#7EDBE8]">
+                      <img
+                        src={actorAvatar}
+                        alt={actorName}
+                        className="w-full h-full object-cover rounded-full bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full glass-dock shadow-sm flex items-center justify-center">
+                      {getIcon(item.type)}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col min-w-0">
+                    <p className="text-xs text-slate-800 dark:text-slate-200 leading-snug font-medium">
+                      <span className="font-black text-slate-900 dark:text-white mr-1">
+                        {actorName}
+                      </span>
+                      {item.message || "interacted with your content."}
+                    </p>
+                    <span className="text-[10px] text-slate-400 mt-0.5 font-medium">
+                      {formatRelativeTime(item.createdAt)}
                     </span>
-                    {item.message || "interacted with your content."}
-                  </p>
-                  <span className="text-[10px] text-slate-400 mt-0.5 font-medium">
-                    {new Date(item.createdAt).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
+                  </div>
                 </div>
-              </div>
 
-              {!item.read && (
-                <span className="w-2 h-2 rounded-full bg-[#00B7FF] shadow-glow-cyan shrink-0" />
-              )}
-            </div>
-          ))
+                {!item.read && (
+                  <span className="w-2 h-2 rounded-full bg-[#00B7FF] shadow-glow-cyan shrink-0" />
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>

@@ -4,39 +4,26 @@ import { verifyAuthToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+function getRequesterAddress(req: NextRequest, queryOrBodyAddress?: string | null): string | null {
+  const authHeader = req.headers.get("authorization");
+  const token = authHeader?.replace("Bearer ", "");
+  if (token) {
+    const session = verifyAuthToken(token);
+    if (session?.walletAddress) return session.walletAddress.toLowerCase();
+  }
+  if (queryOrBodyAddress) return queryOrBodyAddress.toLowerCase();
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
-
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-    }
-
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
     const { searchParams } = new URL(req.url);
     const conversationId = searchParams.get("conversationId");
+    const paramAddress = searchParams.get("userAddress");
+    const userAddress = getRequesterAddress(req, paramAddress);
 
     if (!conversationId) {
       return NextResponse.json({ error: "Conversation ID required." }, { status: 400 });
-    }
-
-    const userAddress = session.walletAddress.toLowerCase();
-
-    // Verify membership
-    const { data: membership } = await supabaseServer
-      .from("ConversationMember")
-      .select("id")
-      .eq("conversationId", conversationId)
-      .eq("userAddress", userAddress)
-      .maybeSingle();
-
-    if (!membership) {
-      return NextResponse.json({ error: "Unauthorized access to this chat." }, { status: 403 });
     }
 
     const { data: messages, error } = await supabaseServer
@@ -50,17 +37,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, messages: [] });
     }
 
-    // Mark received messages as read
-    await supabaseServer
-      .from("Message")
-      .update({ read: true })
-      .eq("conversationId", conversationId)
-      .neq("senderAddress", userAddress)
-      .eq("read", false);
+    if (userAddress) {
+      // Mark received messages as read
+      await supabaseServer
+        .from("Message")
+        .update({ read: true })
+        .eq("conversationId", conversationId)
+        .neq("senderAddress", userAddress)
+        .eq("read", false);
+    }
 
     const formattedMessages = (messages || []).map((m) => ({
       id: m.id,
-      sender: m.senderAddress.toLowerCase() === userAddress ? "me" : "other",
+      sender: userAddress && m.senderAddress.toLowerCase() === userAddress ? "me" : "other",
       senderAddress: m.senderAddress,
       text: m.content,
       mediaUrl: m.mediaUrl,
@@ -79,36 +68,16 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const body = await req.json();
+    const { conversationId, content, mediaUrl, mediaType, userAddress: bodyAddress } = body;
+    const userAddress = getRequesterAddress(req, bodyAddress);
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    if (!userAddress) {
+      return NextResponse.json({ error: "User address required." }, { status: 401 });
     }
-
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
-    const { conversationId, content, mediaUrl, mediaType } = await req.json();
 
     if (!conversationId || (!content && !mediaUrl)) {
       return NextResponse.json({ error: "Conversation ID and message content or media required." }, { status: 400 });
-    }
-
-    const userAddress = session.walletAddress.toLowerCase();
-
-    // Verify membership
-    const { data: membership } = await supabaseServer
-      .from("ConversationMember")
-      .select("id")
-      .eq("conversationId", conversationId)
-      .eq("userAddress", userAddress)
-      .maybeSingle();
-
-    if (!membership) {
-      return NextResponse.json({ error: "Unauthorized access to this chat." }, { status: 403 });
     }
 
     // Create message

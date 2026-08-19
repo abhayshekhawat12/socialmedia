@@ -19,6 +19,7 @@ import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
 import { GlassModal } from "./ui/GlassModal";
 import { resolveMediaUrl, handleImageFallback } from "../lib/mediaHelper";
+import { formatRelativeTime } from "../lib/formatTime";
 
 export interface PostCardProps {
   post: {
@@ -93,22 +94,7 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
   if (isDeleted) return null;
 
   const formatTime = (dateStr: string) => {
-    try {
-      const date = new Date(dateStr);
-      const now = new Date();
-      const diffMs = now.getTime() - date.getTime();
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-      if (diffMins < 1) return "Just now";
-      if (diffMins < 60) return `${diffMins}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      if (diffDays < 7) return `${diffDays}d ago`;
-      return date.toLocaleDateString();
-    } catch {
-      return "";
-    }
+    return formatRelativeTime(dateStr);
   };
 
   const handleToggleLike = async () => {
@@ -172,7 +158,8 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userAddress: account,
-          postId: post.id,
+          targetId: post.id,
+          targetType: "post",
         }),
       });
     } catch (err) {
@@ -180,13 +167,27 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
     }
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
     audioHaptics.playTap();
     const url = typeof window !== "undefined" ? `${window.location.origin}/post/${post.id}` : "";
-    navigator.clipboard.writeText(url);
-    setCopiedShare(true);
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Post by ${authorDisplayName}`,
+          text: post.caption || "Check out this post on Pulse",
+          url,
+        });
+      } catch {
+        navigator.clipboard.writeText(url);
+        setCopiedShare(true);
+        setTimeout(() => setCopiedShare(false), 2000);
+      }
+    } else {
+      navigator.clipboard.writeText(url);
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2000);
+    }
     setIsMenuOpen(false);
-    setTimeout(() => setCopiedShare(false), 2000);
   };
 
   const handleDeletePost = async () => {

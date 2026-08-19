@@ -106,9 +106,12 @@ export async function POST(
       await supabaseServer.from("Notification").insert(
         withTimestamps({
           recipientAddress: currentPulse.authorAddress,
-          actorAddress: normalizedAuthor,
+          senderAddress: normalizedAuthor,
           type: "COMMENT",
-          message: `commented on your Reel`,
+          title: "New Comment on Reel 💬",
+          message: `commented on your Reel: "${content.slice(0, 35)}${content.length > 35 ? "..." : ""}"`,
+          link: `/pulse`,
+          read: false,
         })
       );
     }

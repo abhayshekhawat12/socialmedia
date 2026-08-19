@@ -5,21 +5,26 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
+function getRequesterAddress(req: NextRequest, queryOrBodyAddress?: string | null): string | null {
+  const authHeader = req.headers.get("authorization");
+  const token = authHeader?.replace("Bearer ", "");
+  if (token) {
+    const session = verifyAuthToken(token);
+    if (session?.walletAddress) return session.walletAddress.toLowerCase();
+  }
+  if (queryOrBodyAddress) return queryOrBodyAddress.toLowerCase();
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const { searchParams } = new URL(req.url);
+    const paramAddress = searchParams.get("userAddress");
+    const userAddress = getRequesterAddress(req, paramAddress);
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized. Auth token required." }, { status: 401 });
+    if (!userAddress) {
+      return NextResponse.json({ error: "User address or auth token required." }, { status: 401 });
     }
-
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
-    const userAddress = session.walletAddress.toLowerCase();
 
     // 1. Fetch conversation memberships
     const { data: userMemberships, error } = await supabaseServer
@@ -27,14 +32,11 @@ export async function GET(req: NextRequest) {
       .select("conversationId")
       .eq("userAddress", userAddress);
 
-    if (error || !userMemberships) {
+    if (error || !userMemberships || userMemberships.length === 0) {
       return NextResponse.json({ success: true, chats: [] });
     }
 
     const conversationIds = userMemberships.map((m) => m.conversationId);
-    if (conversationIds.length === 0) {
-      return NextResponse.json({ success: true, chats: [] });
-    }
 
     // 2. Fetch all members of these conversations
     const { data: allMembers } = await supabaseServer
@@ -42,14 +44,14 @@ export async function GET(req: NextRequest) {
       .select("*")
       .in("conversationId", conversationIds);
 
-    // 3. Fetch latest message for each conversation
+    // 3. Fetch latest messages
     const { data: messages } = await supabaseServer
       .from("Message")
       .select("*")
       .in("conversationId", conversationIds)
       .order("createdAt", { ascending: false });
 
-    // Fetch profiles for other members
+    // 4. Fetch profiles for other members
     const otherAddresses = Array.from(
       new Set(
         (allMembers || [])
@@ -87,7 +89,7 @@ export async function GET(req: NextRequest) {
         name: prof?.displayName || `User ${otherAddr.slice(0, 6)}`,
         username: prof?.username ? `@${prof.username}` : `@user_${otherAddr.slice(0, 8)}`,
         avatar: prof?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${otherAddr}`,
-        lastMessage: lastMsg ? lastMsg.content : "No messages yet",
+        lastMessage: lastMsg ? lastMsg.content : "Start a conversation 👋",
         time: lastMsg ? new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
         timestamp: lastMsg ? lastMsg.createdAt : new Date().toISOString(),
         unread: lastMsg ? (lastMsg.senderAddress.toLowerCase() !== userAddress && !lastMsg.read ? 1 : 0) : 0,
@@ -110,24 +112,18 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const body = await req.json();
+    const { targetAddress, userAddress: bodyAddress } = body;
+    const userAddress = getRequesterAddress(req, bodyAddress);
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    if (!userAddress) {
+      return NextResponse.json({ error: "Unauthorized. User address required." }, { status: 401 });
     }
 
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
-    const { targetAddress } = await req.json();
     if (!targetAddress) {
       return NextResponse.json({ error: "Target member address required." }, { status: 400 });
     }
 
-    const userAddress = session.walletAddress.toLowerCase();
     const otherAddress = targetAddress.toLowerCase();
 
     if (userAddress === otherAddress) {
@@ -170,47 +166,5 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error("POST chats error:", error);
     return NextResponse.json({ error: error.message || "Failed to create conversation" }, { status: 500 });
-  }
-}
-
-export async function DELETE(req: NextRequest) {
-  try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
-
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-    }
-
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const conversationId = searchParams.get("conversationId");
-
-    if (!conversationId) {
-      return NextResponse.json({ error: "Conversation ID required." }, { status: 400 });
-    }
-
-    const userAddress = session.walletAddress.toLowerCase();
-
-    // Verify membership
-    const { data: membership } = await supabaseServer
-      .from("ConversationMember")
-      .select("id")
-      .eq("conversationId", conversationId)
-      .eq("userAddress", userAddress)
-      .maybeSingle();
-
-    if (!membership) {
-      return NextResponse.json({ error: "Unauthorized. You are not a member of this chat." }, { status: 403 });
-    }
-
-    await supabaseServer.from("Conversation").delete().eq("id", conversationId);
-    return NextResponse.json({ success: true, message: "Conversation deleted successfully." });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Failed to delete conversation" }, { status: 500 });
   }
 }

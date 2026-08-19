@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   Edit3, 
   Check, 
@@ -10,8 +10,12 @@ import {
   Loader2, 
   X,
   Share2,
-  Sparkles
+  Sparkles,
+  MessageCircle,
+  UserPlus,
+  UserCheck
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
@@ -39,11 +43,12 @@ interface ProfileHeaderProps {
 }
 
 export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderProps) {
-  const { account, refreshProfile } = useAuth();
+  const router = useRouter();
+  const { account, user: authUser, refreshProfile } = useAuth();
   const [isEditOpen, setIsEditOpen] = useState(false);
 
   const [displayName, setDisplayName] = useState(user.profile?.displayName || "");
-  const [nickname, setNickname] = useState(user.profile?.nickname || "");
+  const [username, setUsername] = useState(user.profile?.username || "");
   const [bio, setBio] = useState(user.profile?.bio || "");
   const [avatarUrl, setAvatarUrl] = useState(user.profile?.avatarUrl || "");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -53,19 +58,37 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Follow State
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isFollowLoading, setIsFollowLoading] = useState(false);
+  const [localFollowersCount, setLocalFollowersCount] = useState(stats.followersCount);
+
+  // Chat State
+  const [isStartingChat, setIsStartingChat] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isOwnProfile = account && account.toLowerCase() === user.walletAddress.toLowerCase();
+  const currentLoggedInUser = authUser?.walletAddress || authUser?.id || account;
+  const isOwnProfile = currentLoggedInUser && (
+    currentLoggedInUser.toLowerCase() === user.walletAddress?.toLowerCase() ||
+    currentLoggedInUser.toLowerCase() === user.profile?.username?.toLowerCase()
+  );
+
+  useEffect(() => {
+    setLocalFollowersCount(stats.followersCount);
+  }, [stats.followersCount]);
 
   const handleOpenEdit = () => {
     setDisplayName(user.profile?.displayName || "");
-    setNickname(user.profile?.nickname || "");
+    setUsername(user.profile?.username || "");
     setBio(user.profile?.bio || "");
     setAvatarUrl(user.profile?.avatarUrl || "");
     setSelectedFile(null);
     setPreviewAvatar(null);
     setSaveSuccess(false);
+    setSaveError(null);
     setIsEditOpen(true);
   };
 
@@ -91,6 +114,7 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
     try {
       setIsSaving(true);
       audioHaptics.playTap();
@@ -101,14 +125,17 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
         setIsUploading(true);
         const formData = new FormData();
         formData.append("file", selectedFile);
+        formData.append("folder", "avatars");
 
         const uploadRes = await fetch("/api/storage/upload", {
           method: "POST",
           body: formData,
         });
 
-        if (!uploadRes.ok) throw new Error("Failed to upload profile picture");
         const uploadData = await uploadRes.json();
+        if (!uploadRes.ok || !uploadData.url) {
+          throw new Error(uploadData.error || "Failed to upload profile picture");
+        }
         finalAvatarUrl = uploadData.url;
         setIsUploading(false);
       }
@@ -117,41 +144,121 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          walletAddress: user.walletAddress,
+          walletAddress: user.walletAddress || currentLoggedInUser,
           displayName: displayName.trim(),
-          nickname: nickname.trim(),
+          username: username.trim().toLowerCase().replace(/[^a-z0-9_]/g, ""),
           bio: bio.trim(),
           avatarUrl: finalAvatarUrl,
         }),
       });
 
-      if (res.ok) {
-        setSaveSuccess(true);
-        await refreshProfile();
-        if (onProfileUpdated) onProfileUpdated();
-        setTimeout(() => {
-          setIsEditOpen(false);
-          setSaveSuccess(false);
-        }, 600);
+      const resData = await res.json();
+      if (!res.ok) {
+        throw new Error(resData.error || "Failed to update profile");
       }
-    } catch (e) {
+
+      setSaveSuccess(true);
+      if (refreshProfile) await refreshProfile();
+      if (onProfileUpdated) onProfileUpdated();
+      setTimeout(() => {
+        setIsEditOpen(false);
+        setSaveSuccess(false);
+      }, 500);
+    } catch (e: any) {
       console.error("Save profile error:", e);
+      setSaveError(e.message || "Failed to save profile changes.");
     } finally {
       setIsSaving(false);
       setIsUploading(false);
     }
   };
 
+  const handleToggleFollow = async () => {
+    if (!currentLoggedInUser) {
+      router.push("/login");
+      return;
+    }
+
+    try {
+      setIsFollowLoading(true);
+      audioHaptics.playTap();
+      const nextFollow = !isFollowing;
+      setIsFollowing(nextFollow);
+      setLocalFollowersCount((prev) => nextFollow ? prev + 1 : Math.max(0, prev - 1));
+
+      const res = await fetch("/api/users/follow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          followerAddress: currentLoggedInUser,
+          followingAddress: user.walletAddress,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setIsFollowing(data.isFollowing);
+      }
+    } catch (e) {
+      console.error("Follow error:", e);
+    } finally {
+      setIsFollowLoading(false);
+    }
+  };
+
+  const handleStartDirectChat = async () => {
+    if (!currentLoggedInUser) {
+      router.push("/login");
+      return;
+    }
+
+    try {
+      setIsStartingChat(true);
+      audioHaptics.playTap();
+
+      const res = await fetch("/api/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userAddress: currentLoggedInUser,
+          targetAddress: user.walletAddress,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.conversationId) {
+        router.push(`/chats?conversationId=${data.conversationId}`);
+      } else {
+        router.push("/chats");
+      }
+    } catch (e) {
+      console.error("Start chat error:", e);
+      router.push("/chats");
+    } finally {
+      setIsStartingChat(false);
+    }
+  };
+
   const handleCopyLink = () => {
-    if (typeof window !== "undefined") {
-      navigator.clipboard.writeText(window.location.href);
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    if (navigator.share) {
+      navigator.share({
+        title: `${user.profile?.displayName || "Profile"} on Pulse`,
+        url,
+      }).catch(() => {
+        navigator.clipboard.writeText(url);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      });
+    } else {
+      navigator.clipboard.writeText(url);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
     }
   };
 
-  const mainName = user.profile?.displayName || `User ${user.walletAddress.slice(0, 6)}`;
-  const username = user.profile?.username || `user_${user.walletAddress.slice(0, 8)}`;
+  const mainName = user.profile?.displayName || user.profile?.username || `User ${user.walletAddress?.slice(0, 6)}`;
+  const displayUsername = user.profile?.username || `user_${user.walletAddress?.slice(0, 8)}`;
   const currentAvatar = user.profile?.avatarUrl;
 
   return (
@@ -188,7 +295,7 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
                   <Check className="w-2.5 h-2.5 stroke-[3]" />
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">@{username}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">@{displayUsername}</p>
             </div>
 
             {/* Action Buttons */}
@@ -209,20 +316,52 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
                   >
                     {copiedLink ? <Check className="w-4 h-4 text-emerald-500" /> : <Share2 className="w-4 h-4" />}
                   </button>
+                  <Link
+                    href="/settings"
+                    className="p-2 glass-pill text-slate-700 dark:text-slate-200 rounded-2xl transition btn-tactile"
+                    title="Settings"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </Link>
                 </>
               ) : (
                 <>
                   <button
-                    className="px-6 py-2 bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 text-xs font-black rounded-2xl shadow-sm hover:opacity-90 transition btn-tactile cursor-pointer"
+                    onClick={handleToggleFollow}
+                    disabled={isFollowLoading}
+                    className={`px-5 py-2 text-xs font-black rounded-2xl shadow-sm transition btn-tactile cursor-pointer flex items-center gap-1.5 ${
+                      isFollowing
+                        ? "glass-pill text-slate-700 dark:text-slate-200 border-cyan-500/30"
+                        : "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 hover:opacity-90"
+                    }`}
                   >
-                    Follow
+                    {isFollowing ? (
+                      <>
+                        <UserCheck className="w-3.5 h-3.5 text-cyan-500" />
+                        <span>Following</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>Follow</span>
+                      </>
+                    )}
                   </button>
-                  <Link
-                    href="/chats"
-                    className="px-4 py-2 glass-pill text-slate-800 dark:text-white text-xs font-bold rounded-2xl transition btn-tactile"
+                  <button
+                    onClick={handleStartDirectChat}
+                    disabled={isStartingChat}
+                    className="px-4 py-2 glass-pill text-slate-800 dark:text-white text-xs font-bold rounded-2xl transition btn-tactile flex items-center gap-1.5 cursor-pointer"
                   >
-                    Message
-                  </Link>
+                    {isStartingChat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5 text-[#00B7FF]" />}
+                    <span>Message</span>
+                  </button>
+                  <button
+                    onClick={handleCopyLink}
+                    className="p-2 glass-pill text-slate-700 dark:text-slate-200 rounded-2xl transition btn-tactile cursor-pointer"
+                    title="Share Profile"
+                  >
+                    {copiedLink ? <Check className="w-4 h-4 text-emerald-500" /> : <Share2 className="w-4 h-4" />}
+                  </button>
                 </>
               )}
             </div>
@@ -245,7 +384,7 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
         </div>
         <div className="p-3 rounded-2xl glass-panel">
           <span className="block text-base font-black text-slate-900 dark:text-white">
-            {stats.followersCount}
+            {localFollowersCount}
           </span>
           <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Followers</span>
         </div>
@@ -265,6 +404,12 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
         maxWidth="md"
       >
         <form onSubmit={handleSaveProfile} className="space-y-3.5">
+          {saveError && (
+            <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-bold">
+              {saveError}
+            </div>
+          )}
+
           {/* DP Row */}
           <div className="flex items-center gap-3 p-3 rounded-2xl glass-panel">
             <div className="w-14 h-14 rounded-full overflow-hidden border border-white/60 bg-white dark:bg-slate-900 shrink-0">
@@ -315,6 +460,17 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
           </div>
 
           <div>
+            <label className="block text-xs font-bold text-slate-500 mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
+              className="w-full p-2.5 rounded-xl glass-input text-xs text-slate-900 dark:text-white outline-none font-semibold"
+              required
+            />
+          </div>
+
+          <div>
             <label className="block text-xs font-bold text-slate-500 mb-1">Bio</label>
             <textarea
               value={bio}
@@ -336,9 +492,10 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
             <button
               type="submit"
               disabled={isSaving || isUploading}
-              className="px-5 py-2 bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 text-xs font-black rounded-xl transition shadow-md hover:opacity-90 disabled:opacity-50 cursor-pointer"
+              className="px-5 py-2 bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 text-xs font-black rounded-xl transition shadow-md hover:opacity-90 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
             >
-              {isSaving ? "Saving..." : saveSuccess ? "Saved!" : "Save Changes"}
+              {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              <span>{isSaving ? "Saving..." : saveSuccess ? "Saved!" : "Save Changes"}</span>
             </button>
           </div>
         </form>

@@ -39,13 +39,16 @@ export async function POST(req: NextRequest) {
         })
       );
 
-      // Notification
+      // Notification to followed user
       await supabaseServer.from("Notification").insert(
         withTimestamps({
           recipientAddress: following,
-          actorAddress: follower,
+          senderAddress: follower,
           type: "FOLLOW",
+          title: "New Follower 🎉",
           message: "started following you",
+          link: `/profile/${follower}`,
+          read: false,
         })
       );
 

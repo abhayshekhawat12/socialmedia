@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { Sparkles, Search, Bell } from "lucide-react";
+import { Sparkles, Search, Bell, MessageCircle } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
 
@@ -50,6 +50,15 @@ export const MobileHeader: React.FC = () => {
             title="Search"
           >
             <Search className="w-4 h-4 stroke-[2.4]" />
+          </Link>
+
+          <Link
+            href="/chats"
+            onClick={() => audioHaptics.playTap()}
+            className="p-2 rounded-full glass-pill text-slate-700 dark:text-slate-200 btn-tactile hover:bg-white/80 dark:hover:bg-slate-800"
+            title="Messages"
+          >
+            <MessageCircle className="w-4.5 h-4.5 stroke-[2.4] text-[#00B7FF]" />
           </Link>
 
           <Link

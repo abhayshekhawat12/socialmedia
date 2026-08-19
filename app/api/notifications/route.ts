@@ -17,17 +17,19 @@ export async function GET(req: NextRequest) {
       .select("*")
       .eq("recipientAddress", userAddress)
       .order("createdAt", { ascending: false })
-      .limit(30);
+      .limit(40);
 
     if (error) {
       return NextResponse.json({ success: true, notifications: [] });
     }
 
     const notifList = notifications || [];
-    const actorAddresses = Array.from(new Set(notifList.map((n) => (n.actorAddress || "").toLowerCase()))).filter(Boolean);
+    const senderAddresses = Array.from(
+      new Set(notifList.map((n) => (n.senderAddress || n.actorAddress || "").toLowerCase()))
+    ).filter(Boolean);
 
     let profiles: any[] = [];
-    if (actorAddresses.length > 0) {
+    if (senderAddresses.length > 0) {
       const { data: profileData } = await supabaseServer
         .from("Profile")
         .select("*, user:User(*)");
@@ -45,7 +47,7 @@ export async function GET(req: NextRequest) {
     }
 
     const enriched = notifList.map((n) => {
-      const actorKey = (n.actorAddress || "").toLowerCase();
+      const actorKey = (n.senderAddress || n.actorAddress || "").toLowerCase();
       const prof = profileMap.get(actorKey);
       return {
         ...n,
@@ -60,6 +62,34 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, notifications: enriched });
   } catch (error: any) {
     return NextResponse.json({ success: true, notifications: [] });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const { recipientAddress, senderAddress, type, title, message, link } = await req.json();
+
+    if (!recipientAddress || !message) {
+      return NextResponse.json({ error: "recipientAddress and message required" }, { status: 400 });
+    }
+
+    const { data: notif, error } = await supabaseServer.from("Notification").insert(
+      withTimestamps({
+        recipientAddress: recipientAddress.toLowerCase(),
+        senderAddress: (senderAddress || "system").toLowerCase(),
+        type: type || "INFO",
+        title: title || "New Notification",
+        message,
+        link: link || "/",
+        read: false,
+      })
+    ).select().single();
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, notification: notif });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to create notification" }, { status: 500 });
   }
 }
 

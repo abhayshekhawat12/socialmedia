@@ -58,9 +58,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userAddress, targetId, targetType = "post", folder = "All" } = body;
+    const { userAddress, targetId, postId, pulseId, targetType = "post", folder = "All" } = body;
+    const finalTargetId = targetId || (targetType === "pulse" || targetType === "reel" ? pulseId : postId);
 
-    if (!userAddress || !targetId) {
+    if (!userAddress || !finalTargetId) {
       return NextResponse.json({ error: "User address and target ID required" }, { status: 400 });
     }
 
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
         .from("SavedPulse")
         .select("id")
         .eq("userAddress", normalizedUser)
-        .eq("pulseId", targetId)
+        .eq("pulseId", finalTargetId)
         .maybeSingle();
 
       if (existing) {
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
         await supabaseServer.from("SavedPulse").insert(
           withTimestamps({
             userAddress: normalizedUser,
-            pulseId: targetId,
+            pulseId: finalTargetId,
             folder,
           })
         );
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
         .from("SavedPost")
         .select("id")
         .eq("userAddress", normalizedUser)
-        .eq("postId", targetId)
+        .eq("postId", finalTargetId)
         .maybeSingle();
 
       if (existing) {
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
         await supabaseServer.from("SavedPost").insert(
           withTimestamps({
             userAddress: normalizedUser,
-            postId: targetId,
+            postId: finalTargetId,
             folder,
           })
         );

@@ -55,9 +55,12 @@ export async function POST(
         await supabaseServer.from("Notification").insert(
           withTimestamps({
             recipientAddress: currentPulse.authorAddress,
-            actorAddress: normalizedUser,
+            senderAddress: normalizedUser,
             type: "LIKE",
+            title: "New Like on Reel ❤️",
             message: `liked your Reel`,
+            link: `/pulse`,
+            read: false,
           })
         );
       }
