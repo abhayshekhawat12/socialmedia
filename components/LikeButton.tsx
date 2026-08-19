@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Heart } from 'lucide-react';
-import { useWeb3 } from '../lib/web3Context';
+import { useAuth } from '../lib/authContext';
 
 interface LikeButtonProps {
   postId: number | string;
@@ -15,14 +15,14 @@ export const LikeButton: React.FC<LikeButtonProps> = ({
   initialLikeCount = 0,
   initialLiked = false,
 }) => {
-  const { account, connectWallet } = useWeb3();
+  const { account } = useAuth();
   const [isLiked, setIsLiked] = useState(initialLiked);
   const [likeCount, setLikeCount] = useState(initialLikeCount);
 
   const handleToggleLike = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!account) {
-      await connectWallet();
+      window.location.href = "/login";
       return;
     }
 

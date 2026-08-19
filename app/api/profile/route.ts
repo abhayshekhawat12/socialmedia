@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyAuthToken } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const address = searchParams.get("walletAddress")?.toLowerCase();
@@ -25,31 +27,31 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const followersCount = await prisma.follow.count({
-    where: { followingAddress: address },
-  });
+  const [followersCount, followingCount, postsCount] = await Promise.all([
+    prisma.follow.count({ where: { followingAddress: address } }),
+    prisma.follow.count({ where: { followerAddress: address } }),
+    prisma.post.count({ where: { authorAddress: address } }),
+  ]);
 
-  const followingCount = await prisma.follow.count({
-    where: { followerAddress: address },
-  });
-
-  const postsCount = await prisma.post.count({
-    where: { authorAddress: address },
-  });
-
-  const nftsCount = await prisma.nFT.count({
-    where: { ownerAddress: address },
-  });
-
-  return NextResponse.json({
-    profile,
-    stats: {
-      followersCount,
-      followingCount,
-      postsCount,
-      nftsCount,
+  return NextResponse.json(
+    {
+      profile: {
+        ...profile,
+        nickname: profile.nickname || "",
+      },
+      user: profile.user,
+      stats: {
+        followersCount,
+        followingCount,
+        postsCount,
+      },
     },
-  });
+    {
+      headers: {
+        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60",
+      },
+    }
+  );
 }
 
 export async function PUT(req: NextRequest) {
@@ -60,17 +62,17 @@ export async function PUT(req: NextRequest) {
     let walletAddress: string | null = null;
     if (token) {
       const session = verifyAuthToken(token);
-      if (session) walletAddress = session.walletAddress;
+      if (session) walletAddress = session.walletAddress || null;
     }
 
     const body = await req.json();
     const targetAddress = body.walletAddress?.toLowerCase() || walletAddress;
 
     if (!targetAddress) {
-      return NextResponse.json({ error: "Unauthorized wallet request" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized user request" }, { status: 401 });
     }
 
-    const { username, displayName, bio, avatarUrl, bannerUrl, avatarCid, web3ProfileId } = body;
+    const { username, displayName, nickname, bio, avatarUrl, bannerUrl } = body;
 
     const user = await prisma.user.findUnique({
       where: { walletAddress: targetAddress },
@@ -84,22 +86,20 @@ export async function PUT(req: NextRequest) {
       where: { userId: user.id },
       create: {
         userId: user.id,
-        username: username || `creator_${targetAddress.slice(2, 8)}`,
-        displayName: displayName || `Creator ${targetAddress.slice(0, 6)}`,
+        username: username || `user_${targetAddress.slice(0, 8)}`,
+        displayName: displayName || `User ${targetAddress.slice(0, 6)}`,
+        nickname: nickname || "",
         bio: bio || "",
         avatarUrl: avatarUrl || "",
         bannerUrl: bannerUrl || "",
-        avatarCid: avatarCid || "",
-        web3ProfileId: web3ProfileId || `web3_id_${targetAddress.slice(2, 10)}`,
       },
       update: {
         ...(username && { username }),
         ...(displayName && { displayName }),
+        ...(nickname !== undefined && { nickname }),
         ...(bio !== undefined && { bio }),
         ...(avatarUrl !== undefined && { avatarUrl }),
         ...(bannerUrl !== undefined && { bannerUrl }),
-        ...(avatarCid !== undefined && { avatarCid }),
-        ...(web3ProfileId !== undefined && { web3ProfileId }),
       },
     });
 

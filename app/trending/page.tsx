@@ -21,7 +21,7 @@ import {
   Bookmark,
   Loader2
 } from "lucide-react";
-import { useWeb3 } from "../../lib/web3Context";
+import { useAuth } from "../../lib/authContext";
 
 interface Song {
   id: string;
@@ -47,7 +47,7 @@ interface Creator {
 
 export default function TrendingPage() {
   const router = useRouter();
-  const { account, isWeb3Connected, connectWallet } = useWeb3();
+  const { account } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<"reels" | "audio" | "filters" | "creators" | "hashtags">("reels");
   
   // Data States

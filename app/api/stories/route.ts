@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   try {
     const now = new Date();
@@ -61,7 +63,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { authorAddress, mediaUrl, mediaType, textContent, textBgColor = "#121212", privacy = "everyone" } = body;
+    const { authorAddress, mediaUrl, mediaType, textContent, textBgColor = "#121212", audioTitle, audioUrl, privacy = "everyone" } = body;
 
     if (!authorAddress || !mediaType) {
       return NextResponse.json({ error: "Author address and media type required" }, { status: 400 });
@@ -79,11 +81,10 @@ export async function POST(req: NextRequest) {
       await prisma.user.create({
         data: {
           walletAddress: normalizedAuthor,
-          nonce: `nonce_${Math.random()}`,
           profile: {
             create: {
-              username: `creator_${normalizedAuthor.slice(2, 8)}`,
-              displayName: `Creator ${normalizedAuthor.slice(0, 6)}`,
+              username: `user_${normalizedAuthor.slice(0, 8)}`,
+              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
             },
           },
         },
@@ -97,6 +98,8 @@ export async function POST(req: NextRequest) {
         mediaType,
         textContent: textContent || null,
         textBgColor,
+        audioTitle: audioTitle || null,
+        audioUrl: audioUrl || null,
         privacy,
         expiresAt,
       },

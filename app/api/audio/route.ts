@@ -1,91 +1,103 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { MUSIC_CATALOG } from "@/lib/musicCatalog";
 
-const SEED_AUDIO = [
-  {
-    title: "Cosmic Cyber Beat",
-    artist: "Aura Original",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-    duration: 372,
-    thumbnailUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop&q=80",
-    useCount: 12500,
-    trendGrowth: 124.0,
-    status: "trending",
-  },
-  {
-    title: "Neon Cyber Synth",
-    artist: "Web3 Vibe",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    duration: 423,
-    thumbnailUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=200&auto=format&fit=crop&q=80",
-    useCount: 9800,
-    trendGrowth: 85.5,
-    status: "trending",
-  },
-  {
-    title: "Decentralized Bassline",
-    artist: "DJ Hardhat",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-    duration: 302,
-    thumbnailUrl: "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=200&auto=format&fit=crop&q=80",
-    useCount: 7600,
-    trendGrowth: 42.1,
-    status: "rising",
-  },
-  {
-    title: "Lofi Pulse",
-    artist: "Chill Wave Creator",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    duration: 300,
-    thumbnailUrl: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=200&auto=format&fit=crop&q=80",
-    useCount: 5400,
-    trendGrowth: 110.2,
-    status: "trending",
-  },
-  {
-    title: "Retro Future Wave",
-    artist: "Synthesizer Dream",
-    url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-    duration: 345,
-    thumbnailUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80",
-    useCount: 3200,
-    trendGrowth: 67.4,
-    status: "popular",
-  }
-];
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const query = searchParams.get("q")?.trim() || "";
-    const filter = searchParams.get("filter") || "all"; // all | trending | rising | popular
+    const query = searchParams.get("q")?.trim().toLowerCase() || "";
+    const category = searchParams.get("category") || "all";
+    const userAddress = searchParams.get("userAddress")?.toLowerCase();
 
-    let audioList = await prisma.audio.findMany({
-      orderBy: { useCount: "desc" },
-    });
-
-    if (audioList.length === 0) {
-      for (const item of SEED_AUDIO) {
-        await prisma.audio.create({ data: item });
+    // 1. Fetch user preferences if userAddress is provided
+    let userInterests: string[] = [];
+    if (userAddress) {
+      try {
+        const settings = await prisma.userSettings.findUnique({
+          where: { walletAddress: userAddress },
+        });
+        if (settings?.interests) {
+          userInterests = settings.interests.split(",").map((s) => s.trim().toLowerCase());
+        }
+      } catch (err) {
+        console.warn("User settings query warning:", err);
       }
-      audioList = await prisma.audio.findMany({
+    }
+
+    // 2. Query DB with fallback to static MUSIC_CATALOG
+    const where: any = {};
+    if (category && category !== "all" && category !== "recommended") {
+      if (category.toLowerCase() === "trending") {
+        where.status = "trending";
+      } else {
+        where.category = { equals: category };
+      }
+    }
+
+    let tracks: any[] = [];
+    try {
+      tracks = await prisma.audio.findMany({
+        where,
         orderBy: { useCount: "desc" },
       });
+    } catch (dbErr) {
+      console.warn("Audio DB fetch warning, falling back to catalog:", dbErr);
+    }
+
+    // If DB is empty, use MUSIC_CATALOG directly
+    if (!tracks || tracks.length === 0) {
+      tracks = MUSIC_CATALOG.map((t) => ({
+        ...t,
+        useCount: t.trending ? 150 : 25,
+        status: t.trending ? "trending" : "rising",
+      }));
+
+      if (category && category !== "all" && category !== "recommended") {
+        if (category.toLowerCase() === "trending") {
+          tracks = tracks.filter((t) => t.trending);
+        } else {
+          tracks = tracks.filter((t) => t.category.toLowerCase() === category.toLowerCase());
+        }
+      }
     }
 
     if (query) {
-      const cleanQ = query.toLowerCase();
-      audioList = audioList.filter(
-        (a) => a.title.toLowerCase().includes(cleanQ) || a.artist.toLowerCase().includes(cleanQ)
+      tracks = tracks.filter(
+        (t) =>
+          t.title.toLowerCase().includes(query) ||
+          t.artist.toLowerCase().includes(query) ||
+          t.category.toLowerCase().includes(query) ||
+          t.language.toLowerCase().includes(query)
       );
     }
 
-    if (filter !== "all") {
-      audioList = audioList.filter((a) => a.status === filter);
+    // 3. Personalized scoring / sorting
+    if (userInterests.length > 0) {
+      tracks.sort((a, b) => {
+        const aMatches = userInterests.includes(a.category.toLowerCase()) || userInterests.includes(a.language.toLowerCase()) ? 1 : 0;
+        const bMatches = userInterests.includes(b.category.toLowerCase()) || userInterests.includes(b.language.toLowerCase()) ? 1 : 0;
+        if (aMatches !== bMatches) return bMatches - aMatches;
+        return (b.useCount || 0) - (a.useCount || 0);
+      });
     }
 
-    return NextResponse.json({ success: true, audio: audioList });
+    return NextResponse.json(
+      {
+        success: true,
+        audio: tracks,
+        total: tracks.length,
+        categories: ["All", "Trending", "Bollywood", "Punjabi", "Haryanvi", "Rajasthani", "Hindi", "English", "Instrumental"],
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120",
+        },
+      }
+    );
   } catch (error: any) {
+    console.error("GET /api/audio error:", error);
     return NextResponse.json({ error: error.message || "Failed to fetch audio tracks" }, { status: 500 });
   }
 }
@@ -93,7 +105,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { title, artist, url, duration, thumbnailUrl } = body;
+    const { title, artist, url, duration, thumbnailUrl, category = "Bollywood", language = "Hindi" } = body;
 
     if (!title || !url) {
       return NextResponse.json({ error: "Title and audio URL are required" }, { status: 400 });
@@ -104,8 +116,10 @@ export async function POST(req: NextRequest) {
         title,
         artist: artist || "Original Audio",
         url,
-        duration: duration || 15,
+        duration: duration || 30,
         thumbnailUrl: thumbnailUrl || "",
+        category,
+        language,
         useCount: 1,
         trendGrowth: 10.0,
         status: "rising",

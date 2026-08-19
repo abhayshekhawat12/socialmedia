@@ -10,10 +10,14 @@ const DEFAULT_GATEWAYS = [
  */
 export function resolveIPFSUrl(cidOrUrl: string | undefined): string {
   if (!cidOrUrl) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80';
-  if (cidOrUrl.startsWith('data:') || cidOrUrl.startsWith('http://') || cidOrUrl.startsWith('https://')) {
+  if (cidOrUrl.startsWith('data:') || cidOrUrl.startsWith('/') || cidOrUrl.startsWith('http://') || cidOrUrl.startsWith('https://')) {
     return cidOrUrl;
   }
   const cleanCID = cidOrUrl.replace('ipfs://', '');
+  if (typeof window !== 'undefined') {
+    const cached = localStorage.getItem(`ipfs_${cleanCID}`);
+    if (cached) return cached;
+  }
   return `${DEFAULT_GATEWAYS[0]}${cleanCID}`;
 }
 
@@ -66,6 +70,9 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
     }
 
     const data = await res.json();
+    if (data.url && typeof window !== 'undefined') {
+      localStorage.setItem(`ipfs_${data.cid}`, data.url);
+    }
     return data.cid;
   } catch (error) {
     console.warn('IPFS API file route failed, using data URL fallback:', error);

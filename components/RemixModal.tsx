@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { GitFork, Sparkles, X, ArrowRight, Loader2 } from 'lucide-react';
-import { useWeb3 } from '../lib/web3Context';
+import { GitFork, Sparkles, X, Loader2 } from 'lucide-react';
+import { useAuth } from '../lib/authContext';
 
 interface RemixModalProps {
   parentPost?: any;
@@ -11,7 +11,7 @@ interface RemixModalProps {
 }
 
 export const RemixModal: React.FC<RemixModalProps> = ({ parentPost, isOpen, onClose }) => {
-  const { account, connectWallet } = useWeb3();
+  const { account } = useAuth();
   const [remixContent, setRemixContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -20,7 +20,7 @@ export const RemixModal: React.FC<RemixModalProps> = ({ parentPost, isOpen, onCl
   const handleSubmitRemix = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!account) {
-      await connectWallet();
+      window.location.href = "/login";
       return;
     }
 
@@ -34,9 +34,8 @@ export const RemixModal: React.FC<RemixModalProps> = ({ parentPost, isOpen, onCl
             authorAddress: account,
             caption: `[Remix of #${parentPost.id}] ${remixContent.trim()}`,
             mediaUrl: parentPost.mediaUrl || 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80',
-            mediaCid: parentPost.mediaCid || 'QmDefault',
+            mediaCid: parentPost.mediaCid || '',
             mediaType: 'image',
-            contentHash: '0x' + Date.now().toString(16).padStart(64, '0'),
           }),
         });
       }
@@ -54,9 +53,9 @@ export const RemixModal: React.FC<RemixModalProps> = ({ parentPost, isOpen, onCl
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <GitFork className="w-5 h-5 text-purple-600" />
-            <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">Create On-Chain Remix</h3>
+            <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">Remix Post</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -73,10 +72,10 @@ export const RemixModal: React.FC<RemixModalProps> = ({ parentPost, isOpen, onCl
           <button
             type="submit"
             disabled={submitting}
-            className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            <span>Publish Remix On-Chain</span>
+            <span>Publish Remix</span>
           </button>
         </form>
       </div>

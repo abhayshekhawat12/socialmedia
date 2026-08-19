@@ -3,9 +3,10 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useWeb3 } from '../../lib/web3Context';
+import { useAuth } from '../../lib/authContext';
 import { useTheme } from '../../lib/themeContext';
 import { useSettings } from '../../lib/settingsContext';
+import { ContentPreferencesModal } from '../../components/ContentPreferencesModal';
 import {
   ArrowLeft,
   Search,
@@ -48,7 +49,7 @@ import {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { account, chainId, networkName, isSupportedNetwork, switchNetwork, disconnectWallet } = useWeb3();
+  const { account, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const { settings, updateSettings, blockedAccounts, sessions, blockUser, unblockUser, clearCache, cacheSizeMB } = useSettings();
 
@@ -57,6 +58,7 @@ export default function SettingsPage() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState(false);
 
@@ -72,7 +74,6 @@ export default function SettingsPage() {
     { id: 'appearance', label: 'Appearance', icon: Palette, desc: 'Dark / Light Theme, Language & UI' },
     { id: 'storage', label: 'Data & Storage', icon: HardDrive, desc: 'Cache size, Data saver & Quality' },
     { id: 'blocked', label: 'Blocked & Restricted', icon: UserX, desc: 'Manage blocked, restricted & muted' },
-    { id: 'blockchain', label: 'Blockchain & Ownership', icon: Key, desc: 'Wallet status, Verifications & Hashes' },
     { id: 'development', label: 'Development Preferences', icon: TrendingUp, desc: 'Trend alerts, AI suggestions & Best times' },
     { id: 'help', label: 'Help & Support', icon: HelpCircle, desc: 'Help center, Reports & Guidelines' },
     { id: 'about', label: 'About', icon: Info, desc: 'App version, Terms & Open source' },
@@ -256,9 +257,9 @@ export default function SettingsPage() {
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
                   <div>
                     <div className="font-bold text-slate-800 dark:text-slate-200">Connected Accounts</div>
-                    <div className="text-[10px] text-slate-400">MetaMask, Google, GitHub</div>
+                    <div className="text-[10px] text-slate-400">Google, Mobile Phone, GitHub</div>
                   </div>
-                  <span className="text-[11px] font-extrabold text-[#00B7FF]">3 Connected</span>
+                  <span className="text-[11px] font-extrabold text-[#00B7FF]">2 Connected</span>
                 </div>
               </div>
             </div>
@@ -388,6 +389,55 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {/* 5. CONTENT & PREFERENCES */}
+          {activeCategory === 'content' && (
+            <div className="space-y-4">
+              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">
+                🎬 Content Preferences & Interests
+              </h3>
+
+              <div className="p-4 rounded-2xl bg-gradient-to-tr from-cyan-500/15 to-purple-500/15 border border-cyan-500/30 space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <Sparkles className="w-5 h-5 text-[#00B7FF]" />
+                  <div>
+                    <h4 className="font-black text-xs text-slate-900 dark:text-white">Personalize Feeds & Music</h4>
+                    <p className="text-[11px] text-slate-400">Choose Bollywood, Punjabi, Haryanvi, Gaming, Tech, and more</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsPreferencesOpen(true)}
+                  className="w-full py-2.5 rounded-xl bg-[#00B7FF] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-sm hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Choose Your Interests</span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-900">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">High Quality Video Streaming</div>
+                    <div className="text-[10px] text-slate-400">Stream high bitrate Reels and videos when on WiFi.</div>
+                  </div>
+                  <button onClick={() => updateSettings({ autoplay: !settings.autoplay })}>
+                    {settings.autoplay ? <ToggleRight className="w-7 h-7 text-[#00B7FF]" /> : <ToggleLeft className="w-7 h-7 text-slate-400" />}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-900">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">Data Saver Mode</div>
+                    <div className="text-[10px] text-slate-400">Reduce data usage on mobile networks.</div>
+                  </div>
+                  <button onClick={() => updateSettings({ dataSaver: !settings.dataSaver })}>
+                    {settings.dataSaver ? <ToggleRight className="w-7 h-7 text-[#00B7FF]" /> : <ToggleLeft className="w-7 h-7 text-slate-400" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 8. CREATOR / PROFESSIONAL */}
           {activeCategory === 'creator' && (
             <div className="space-y-4">
@@ -427,11 +477,11 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* 9. APPEARANCE */}
+          {/* 9. APPEARANCE & AUDIO */}
           {activeCategory === 'appearance' && (
             <div className="space-y-4">
-              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">
-                🎨 Theme & Appearance
+              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white border-b border-white/60 dark:border-white/10 pb-2">
+                🎨 Theme, Sound & Appearance
               </h3>
 
               <div className="space-y-2">
@@ -439,30 +489,69 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setTheme('light')}
-                    className={`p-3 rounded-2xl border font-bold text-center transition-all ${
+                    className={`p-3 rounded-2xl border font-bold text-center transition-all btn-tactile ${
                       theme === 'light'
-                        ? 'bg-[#00B7FF]/10 border-[#00B7FF] text-[#00B7FF]'
-                        : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                        ? 'bg-[#00B7FF]/15 border-[#00B7FF] text-[#00B7FF]'
+                        : 'glass-panel border-white/40 text-slate-600 dark:text-slate-400'
                     }`}
                   >
                     ☀️ Light
                   </button>
                   <button
                     onClick={() => setTheme('dark')}
-                    className={`p-3 rounded-2xl border font-bold text-center transition-all ${
+                    className={`p-3 rounded-2xl border font-bold text-center transition-all btn-tactile ${
                       theme === 'dark'
-                        ? 'bg-[#00B7FF]/10 border-[#00B7FF] text-[#00B7FF]'
-                        : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                        ? 'bg-[#00B7FF]/15 border-[#00B7FF] text-[#00B7FF]'
+                        : 'glass-panel border-white/40 text-slate-600 dark:text-slate-400'
                     }`}
                   >
                     🌙 Dark
                   </button>
                   <button
                     onClick={() => setTheme('dark')}
-                    className={`p-3 rounded-2xl border font-bold text-center transition-all bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400`}
+                    className="p-3 rounded-2xl border font-bold text-center transition-all glass-panel border-white/40 text-slate-600 dark:text-slate-400 btn-tactile"
                   >
                     🖥️ System
                   </button>
+                </div>
+              </div>
+
+              {/* UI Sounds & Haptic Controls */}
+              <div className="pt-2 space-y-3">
+                <div className="font-bold text-slate-800 dark:text-slate-200">Audio & Sensory Feedback</div>
+                
+                <div className="p-3 rounded-2xl glass-panel flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">UI Sound Effects</div>
+                    <div className="text-[10px] text-slate-400">Play crystalline glass tap and chime sounds on interactions.</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    defaultChecked={typeof window !== 'undefined' ? localStorage.getItem('aura_ui_sounds') !== 'false' : true}
+                    onChange={(e) => {
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('aura_ui_sounds', e.target.checked ? 'true' : 'false');
+                      }
+                    }}
+                    className="accent-[#00B7FF] w-5 h-5 cursor-pointer"
+                  />
+                </div>
+
+                <div className="p-3 rounded-2xl glass-panel flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-white">Haptic Vibration</div>
+                    <div className="text-[10px] text-slate-400">Light physical vibration feedback on buttons, likes and actions.</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    defaultChecked={typeof window !== 'undefined' ? localStorage.getItem('aura_ui_haptics') !== 'false' : true}
+                    onChange={(e) => {
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('aura_ui_haptics', e.target.checked ? 'true' : 'false');
+                      }
+                    }}
+                    className="accent-[#00B7FF] w-5 h-5 cursor-pointer"
+                  />
                 </div>
               </div>
             </div>
@@ -496,51 +585,6 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* 12. BLOCKCHAIN & OWNERSHIP */}
-          {activeCategory === 'blockchain' && (
-            <div className="space-y-4">
-              <h3 className="font-extrabold text-sm text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-2">
-                🔐 Blockchain & Ownership
-              </h3>
-
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold">Wallet Status:</span>
-                  <span className="font-extrabold text-emerald-400 flex items-center gap-1">
-                    🟢 Connected
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold">Wallet Address:</span>
-                  <button onClick={copyAddress} className="font-mono text-[#00B7FF] font-bold flex items-center gap-1">
-                    <span>{account ? `${account.slice(0, 8)}...${account.slice(-6)}` : '0x7A...92F'}</span>
-                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-bold">Network:</span>
-                  <span className="font-bold text-purple-400">{networkName}</span>
-                </div>
-
-                <div className="pt-2 grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => switchNetwork(31337)}
-                    className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs text-center"
-                  >
-                    Switch Network
-                  </button>
-                  <button
-                    onClick={disconnectWallet}
-                    className="px-3 py-2 rounded-xl bg-rose-500/10 text-rose-500 border border-rose-500/20 font-bold text-xs text-center"
-                  >
-                    Disconnect Wallet
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* 13. DEVELOPMENT PREFERENCES */}
           {activeCategory === 'development' && (
@@ -606,9 +650,9 @@ export default function SettingsPage() {
               </button>
               <button
                 onClick={() => {
-                  disconnectWallet();
+                  logout();
                   setShowLogoutConfirm(false);
-                  router.push('/feed');
+                  router.push('/login');
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-rose-500 text-white font-extrabold text-xs"
               >
@@ -618,6 +662,12 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Content Preferences Modal */}
+      <ContentPreferencesModal
+        isOpen={isPreferencesOpen}
+        onClose={() => setIsPreferencesOpen(false)}
+      />
 
     </div>
   );

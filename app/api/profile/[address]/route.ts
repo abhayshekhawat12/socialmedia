@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { address: string } }
@@ -23,28 +25,16 @@ export async function GET(
     return NextResponse.json({ error: "User profile not found" }, { status: 404 });
   }
 
-  const walletAddress = user.walletAddress;
+  const walletAddress = user.walletAddress || "";
 
-  const [posts, nfts, verifications, followersCount, followingCount] = await Promise.all([
+  const [posts, followersCount, followingCount] = await Promise.all([
     prisma.post.findMany({
       where: { authorAddress: walletAddress },
       orderBy: { createdAt: "desc" },
       include: {
         likes: true,
         comments: true,
-        verifications: true,
-        nfts: true,
       },
-    }),
-    prisma.nFT.findMany({
-      where: { ownerAddress: walletAddress },
-      include: { post: true },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.contentVerification.findMany({
-      where: { authorAddress: walletAddress },
-      include: { post: true },
-      orderBy: { verifiedAt: "desc" },
     }),
     prisma.follow.count({ where: { followingAddress: walletAddress } }),
     prisma.follow.count({ where: { followerAddress: walletAddress } }),
@@ -57,12 +47,8 @@ export async function GET(
       profile: user.profile,
     },
     posts,
-    nfts,
-    verifications,
     stats: {
       postsCount: posts.length,
-      nftsCount: nfts.length,
-      verificationsCount: verifications.length,
       followersCount,
       followingCount,
     },

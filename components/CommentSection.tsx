@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { MessageSquare, Send, User } from "lucide-react";
-import { useWeb3 } from "../lib/web3Context";
+import { MessageSquare, Send } from "lucide-react";
+import { useAuth } from "../lib/authContext";
 
 interface Comment {
   id: string;
@@ -23,7 +23,7 @@ interface CommentSectionProps {
 }
 
 export function CommentSection({ postId, comments: initialComments, onCommentAdded }: CommentSectionProps) {
-  const { account, connectWallet } = useWeb3();
+  const { account } = useAuth();
   const [comments, setComments] = useState<Comment[]>(initialComments || []);
   const [newCommentText, setNewCommentText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -33,13 +33,13 @@ export function CommentSection({ postId, comments: initialComments, onCommentAdd
     if (!newCommentText.trim()) return;
 
     if (!account) {
-      await connectWallet();
+      window.location.href = "/login";
       return;
     }
 
     try {
       setIsSubmitting(true);
-      const res = await fetch(`/api/posts/${postId}/comment`, {
+      const res = await fetch(`/api/posts/${postId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -76,14 +76,14 @@ export function CommentSection({ postId, comments: initialComments, onCommentAdd
           type="text"
           value={newCommentText}
           onChange={(e) => setNewCommentText(e.target.value)}
-          placeholder={account ? "Add a Web3 comment..." : "Connect wallet to comment..."}
+          placeholder={account ? "Add a comment..." : "Sign in to comment..."}
           disabled={isSubmitting}
-          className="flex-1 px-4 py-2 text-xs rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 transition-colors"
+          className="flex-1 px-4 py-2 text-xs rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-[#00B7FF] transition-colors"
         />
         <button
           type="submit"
           disabled={isSubmitting || !newCommentText.trim()}
-          className="px-4 py-2 text-xs font-bold rounded-full bg-gradient-to-r from-cyan-500 to-purple-600 text-white disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center gap-1 shrink-0"
+          className="px-4 py-2 text-xs font-bold rounded-full bg-[#00B7FF] text-slate-950 disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center gap-1 shrink-0 cursor-pointer"
         >
           <Send className="w-3.5 h-3.5" />
           <span>Post</span>
@@ -91,16 +91,16 @@ export function CommentSection({ postId, comments: initialComments, onCommentAdd
       </form>
 
       {/* Comments List */}
-      <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+      <div className="space-y-3 max-h-60 overflow-y-auto pr-1 no-scrollbar">
         {comments.map((comment) => (
           <div key={comment.id} className="flex items-start gap-2.5 text-xs">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-cyan-400 to-purple-500 flex items-center justify-center text-white font-bold text-[10px] shrink-0 mt-0.5">
-              {comment.authorAddress.slice(2, 4).toUpperCase()}
+            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-[#00B7FF] to-purple-500 flex items-center justify-center text-white font-bold text-[10px] shrink-0 mt-0.5">
+              {comment.authorAddress.slice(0, 2).toUpperCase()}
             </div>
             <div className="flex-1 bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-2xl border border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between mb-1">
                 <span className="font-bold text-slate-900 dark:text-slate-100">
-                  {comment.authorProfile?.displayName || `@${comment.authorAddress.slice(0, 6)}`}
+                  {comment.authorProfile?.displayName || `User ${comment.authorAddress.slice(0, 6)}`}
                 </span>
                 <span className="text-[10px] text-slate-400">
                   {new Date(comment.createdAt).toLocaleDateString()}
@@ -115,7 +115,7 @@ export function CommentSection({ postId, comments: initialComments, onCommentAdd
 
         {comments.length === 0 && (
           <p className="text-xs text-slate-400 text-center py-2 italic">
-            No comments yet. Be the first to verify and comment!
+            No comments yet. Be the first to comment!
           </p>
         )}
       </div>

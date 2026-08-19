@@ -1,59 +1,83 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { generateContentHash } from "@/lib/contract-helper";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const authorAddress = searchParams.get("authorAddress")?.toLowerCase();
-    const filter = searchParams.get("filter"); // all | verified | nfts
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "20", 10);
 
     const where: any = {};
     if (authorAddress) where.authorAddress = authorAddress;
-    if (filter === "nfts") where.isNft = true;
 
     const posts = await prisma.post.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
-      take: limit,
+      take: limit + 1,
       include: {
-        likes: true,
-        comments: {
-          take: 5,
-          orderBy: { createdAt: "desc" },
+        likes: {
+          select: { userAddress: true },
         },
-        verifications: true,
-        nfts: true,
+        savedPosts: {
+          select: { userAddress: true },
+        },
+        comments: {
+          take: 6,
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            authorAddress: true,
+            content: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
-    // Populate profiles for all authors
-    const authorAddresses = Array.from(new Set(posts.map((p) => p.authorAddress)));
-    const profiles = await prisma.profile.findMany({
-      where: {
-        user: {
-          walletAddress: { in: authorAddresses },
-        },
-      },
-      include: { user: true },
-    });
+    const hasMore = posts.length > limit;
+    const paginatedPosts = hasMore ? posts.slice(0, limit) : posts;
+
+    // Populate profiles for all authors efficiently
+    const authorAddresses = Array.from(new Set(paginatedPosts.map((p) => p.authorAddress)));
+    const profiles = authorAddresses.length > 0
+      ? await prisma.profile.findMany({
+          where: {
+            user: {
+              walletAddress: { in: authorAddresses },
+            },
+          },
+          select: {
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            user: { select: { walletAddress: true } },
+          },
+        })
+      : [];
 
     const profileMap = new Map(profiles.map((p) => [p.user.walletAddress, p]));
 
-    const enrichedPosts = posts.map((post) => ({
+    const enrichedPosts = paginatedPosts.map((post) => ({
       ...post,
       authorProfile: profileMap.get(post.authorAddress) || {
-        username: `creator_${post.authorAddress.slice(2, 8)}`,
+        username: `user_${post.authorAddress.slice(0, 8)}`,
         displayName: `Creator ${post.authorAddress.slice(0, 6)}`,
         avatarUrl: "",
-        web3ProfileId: `web3_id_${post.authorAddress.slice(2, 10)}`,
       },
     }));
 
-    return NextResponse.json({ success: true, posts: enrichedPosts });
+    return NextResponse.json(
+      { success: true, posts: enrichedPosts, hasMore, page },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
+        },
+      }
+    );
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Failed to fetch posts" }, { status: 500 });
   }
@@ -63,29 +87,21 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
+      id,
       authorAddress,
-      caption,
-      mediaUrl,
-      mediaCid,
+      caption = "",
+      mediaUrl = "",
+      mediaCid = "",
       mediaType = "image",
       location = "",
       privacy = "public",
-      contentHash: providedHash,
-      onChainDnaId = 0,
-      txHash,
-      isNft = false,
-      nftTokenId,
-      nftTxHash,
     } = body;
 
-    if (!authorAddress || !mediaCid) {
-      return NextResponse.json({ error: "Author address and media CID required" }, { status: 400 });
+    if (!authorAddress || (!mediaUrl && !mediaCid)) {
+      return NextResponse.json({ error: "Author address and media URL are required" }, { status: 400 });
     }
 
     const normalizedAuthor = authorAddress.toLowerCase();
-
-    // Generate SHA256/Keccak content fingerprint if not provided
-    const contentHash = providedHash || generateContentHash(mediaCid, caption || "", normalizedAuthor);
 
     // Ensure user exists
     let user = await prisma.user.findUnique({
@@ -97,11 +113,10 @@ export async function POST(req: NextRequest) {
       user = await prisma.user.create({
         data: {
           walletAddress: normalizedAuthor,
-          nonce: `nonce_${Math.random()}`,
           profile: {
             create: {
-              username: `creator_${normalizedAuthor.slice(2, 8)}`,
-              displayName: `Creator ${normalizedAuthor.slice(0, 6)}`,
+              username: `user_${normalizedAuthor.slice(0, 8)}`,
+              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
             },
           },
         },
@@ -109,60 +124,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Check for duplicate content hash
-    const existingPost = await prisma.post.findUnique({
-      where: { contentHash },
-    });
-
-    if (existingPost) {
-      return NextResponse.json(
-        { error: "Content fingerprint already registered on blockchain (Proof-of-Creation duplicate prevention)" },
-        { status: 409 }
-      );
-    }
-
     // Create post
     const post = await prisma.post.create({
       data: {
+        ...(id && { id }),
         authorAddress: normalizedAuthor,
-        caption: caption || "",
-        mediaUrl: mediaUrl || `https://ipfs.io/ipfs/${mediaCid}`,
+        caption,
+        mediaUrl: mediaUrl || (mediaCid ? `/uploads/${mediaCid}` : ""),
         mediaCid,
         mediaType,
         location,
         privacy,
-        contentHash,
-        onChainDnaId: Number(onChainDnaId),
-        isNft: Boolean(isNft),
-        nftTokenId: nftTokenId ? Number(nftTokenId) : null,
-        nftTxHash: nftTxHash || null,
-        verifications: {
-          create: {
-            contentHash,
-            authorAddress: normalizedAuthor,
-            txHash: txHash || `0xlocal_${Date.now()}_${contentHash.slice(0, 8)}`,
-            onChainDnaId: Number(onChainDnaId),
-            verificationStatus: "VERIFIED",
-          },
-        },
-        ...(isNft && nftTokenId
-          ? {
-              nfts: {
-                create: {
-                  tokenId: Number(nftTokenId),
-                  contractAddress: body.contractAddress || "0xLocalSocialNFTContract",
-                  ownerAddress: normalizedAuthor,
-                  metadataCid: mediaCid,
-                  tokenUri: `ipfs://${mediaCid}`,
-                  mintTxHash: nftTxHash || txHash || `0xmint_${Date.now()}`,
-                },
-              },
-            }
-          : {}),
-      },
-      include: {
-        verifications: true,
-        nfts: true,
       },
     });
 
@@ -179,20 +151,6 @@ export async function POST(req: NextRequest) {
           });
         }
       }
-    }
-
-    // Record Blockchain Transaction
-    if (txHash) {
-      await prisma.blockchainTransaction.create({
-        data: {
-          txHash,
-          fromAddress: normalizedAuthor,
-          toAddress: body.contractAddress || "ProofOfCreationContract",
-          type: isNft ? "NFT_MINT" : "PROOF_REGISTRATION",
-          status: "CONFIRMED",
-          payload: JSON.stringify({ postId: post.id, contentHash, mediaCid }),
-        },
-      });
     }
 
     return NextResponse.json({

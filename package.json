@@ -1,24 +1,18 @@
 {
-  "name": "block-social",
+  "name": "aura-social",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "compile": "hardhat compile",
-    "test": "hardhat test",
-    "node": "hardhat node",
-    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
-    "deploy:sepolia": "hardhat run scripts/deploy.ts --network sepolia"
+    "lint": "next lint"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.2",
     "@prisma/client": "^5.22.0",
     "@types/jsonwebtoken": "^9.0.10",
     "clsx": "^2.1.1",
-    "ethers": "^6.13.2",
+    "firebase": "^12.17.1",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.439.0",
     "next": "^14.2.7",
@@ -28,13 +22,11 @@
     "tailwind-merge": "^2.5.2"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@types/node": "^20.16.2",
     "@types/react": "^18.3.4",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
     "dotenv": "^16.4.5",
-    "hardhat": "^2.22.10",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.5.4"

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useWeb3 } from '../../lib/web3Context';
+import { useAuth } from '../../lib/authContext';
 import { trustGraphService, GraphNode } from '../../lib/services/trustGraphService';
 import {
   Globe,
@@ -60,7 +60,7 @@ interface PostItem {
 }
 
 export default function CommunityPage() {
-  const { account } = useWeb3();
+  const { account } = useAuth();
   const [activeTab, setActiveTab] = useState<'feed' | 'graph' | 'people' | 'reputation'>('feed');
   const [feedFilter, setFeedFilter] = useState<'forYou' | 'trending' | 'latest' | 'following'>('forYou');
   const [posts, setPosts] = useState<PostItem[]>([]);
@@ -523,7 +523,7 @@ export default function CommunityPage() {
                 name: 'Sarah Jenkins',
                 username: '@sarah_j',
                 avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-                commonTopics: 'UX Architecture, MetaMask',
+                commonTopics: 'UX Architecture, UI Motion',
                 reputationScore: 160,
                 level: 'Trusted Contributor',
               },

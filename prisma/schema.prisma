@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -9,23 +9,13 @@ generator client {
 
 model User {
   id            String         @id @default(uuid())
-  walletAddress String         @unique
-  nonce         String
+  walletAddress String?        @unique
+  email         String?        @unique
+  mobileNumber  String?        @unique
+  googleId      String?        @unique
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   profile       Profile?
-  wallets       Wallet[]
-}
-
-model Wallet {
-  id            String   @id @default(uuid())
-  walletAddress String   @unique
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connectedAt   DateTime @default(now())
-  lastUsed      DateTime @updatedAt
-
-  @@index([userId])
 }
 
 model Profile {
@@ -34,12 +24,10 @@ model Profile {
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   username      String   @unique
   displayName   String
+  nickname      String   @default("")
   bio           String   @default("")
   avatarUrl     String   @default("")
   bannerUrl     String   @default("")
-  avatarCid     String   @default("")
-  web3ProfileId String   @default("")
-  totalTips     Float    @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
@@ -49,15 +37,10 @@ model Post {
   authorAddress String
   caption       String
   mediaUrl      String
-  mediaCid      String
+  mediaCid      String               @default("")
   mediaType     String               @default("image") // image | video
   location      String               @default("")
   privacy       String               @default("public") // public | private | followers
-  contentHash   String               @unique
-  onChainDnaId  Int                  @default(0)
-  isNft         Boolean              @default(false)
-  nftTokenId    Int?
-  nftTxHash     String?
   likeCount     Int                  @default(0)
   commentCount  Int                  @default(0)
   shareCount    Int                  @default(0)
@@ -67,11 +50,10 @@ model Post {
 
   comments      Comment[]
   likes         Like[]
-  nfts          NFT[]
-  verifications ContentVerification[]
   shares        Share[]
   views         View[]
   analytics     Analytics?
+  savedPosts    SavedPost[]
 
   @@index([authorAddress])
   @@index([createdAt])
@@ -85,7 +67,6 @@ model Comment {
   pulse         Pulse?   @relation(fields: [pulseId], references: [id], onDelete: Cascade)
   authorAddress String
   content       String
-  commentCid    String   @default("")
   createdAt     DateTime @default(now())
 
   @@index([postId])
@@ -120,7 +101,7 @@ model Notification {
   id               String   @id @default(uuid())
   recipientAddress String
   senderAddress    String
-  type             String   // LIKE | COMMENT | FOLLOW | MENTION | BLOCKCHAIN_TX | NFT_MINT
+  type             String   // LIKE | COMMENT | FOLLOW | MENTION
   title            String
   message          String
   link             String   @default("")
@@ -147,48 +128,6 @@ model Hashtag {
   createdAt DateTime @default(now())
 }
 
-model NFT {
-  id              String   @id @default(uuid())
-  postId          String
-  post            Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  tokenId         Int      @unique
-  contractAddress String
-  ownerAddress    String
-  metadataCid     String
-  tokenUri        String
-  mintTxHash      String
-  createdAt       DateTime @default(now())
-
-  @@index([ownerAddress])
-}
-
-model BlockchainTransaction {
-  id          String   @id @default(uuid())
-  txHash      String   @unique
-  blockNumber Int      @default(0)
-  fromAddress String
-  toAddress   String
-  type        String   // PROFILE_REGISTRATION | PROOF_REGISTRATION | NFT_MINT
-  status      String   // CONFIRMED | PENDING | FAILED
-  payload     String   @default("")
-  createdAt   DateTime @default(now())
-}
-
-model ContentVerification {
-  id                 String   @id @default(uuid())
-  postId             String
-  post               Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  contentHash        String
-  authorAddress      String
-  txHash             String
-  onChainDnaId       Int      @default(0)
-  verificationStatus String   @default("VERIFIED") // VERIFIED | PENDING | UNVERIFIED
-  verifiedAt         DateTime @default(now())
-
-  @@index([contentHash])
-  @@index([authorAddress])
-}
-
 model Pulse {
   id                  String   @id @default(uuid())
   authorAddress       String
@@ -203,7 +142,6 @@ model Pulse {
   audio               Audio?   @relation(fields: [audioId], references: [id])
   filterName          String?  @default("")
   location            String   @default("")
-  contentHash         String   @unique
   privacy             String   @default("Everyone") // Everyone | Followers | Close Friends
   allowComments       Boolean  @default(true)
   allowRemix          Boolean  @default(true)
@@ -215,9 +153,7 @@ model Pulse {
   saveCount           Int      @default(0)
   pulseScore          Int      @default(85)
   authenticScore      Int      @default(94)
-  originalityVerified Boolean  @default(true)
   remixOfId           String?
-  txHash              String   @default("")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -226,6 +162,7 @@ model Pulse {
   shares              Share[]
   views               View[]
   analytics           Analytics?
+  savedPulses         SavedPulse[]
 
   @@index([authorAddress])
   @@index([pulseScore])
@@ -235,10 +172,13 @@ model SavedPulse {
   id          String   @id @default(uuid())
   userAddress String
   pulseId     String
-  folder      String   @default("AI") // AI | Memes | Learning | Inspiration
+  pulse       Pulse    @relation(fields: [pulseId], references: [id], onDelete: Cascade)
+  folder      String   @default("All")
   createdAt   DateTime @default(now())
 
   @@unique([userAddress, pulseId])
+  @@index([userAddress])
+  @@index([pulseId])
 }
 
 model UserSettings {
@@ -283,7 +223,8 @@ model UserSettings {
   aiSuggestions           Boolean  @default(true)
   trendAlerts             Boolean  @default(true)
   opportunityAlerts       Boolean  @default(true)
-  bestPostingTimeAlerts   Boolean  @default(true)
+  interests               String   @default("") // Comma-separated selected interests: Bollywood, Punjabi, Haryanvi, Rajasthani, Hindi, English, Comedy, Travel, Gaming, Sports, Fashion, Fitness, Technology, Motivation, Education, Food, Memes, Lifestyle
+  favoriteGenres          String   @default("")
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 }
@@ -313,15 +254,18 @@ model UserSession {
 }
 
 model Story {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   authorAddress String
   mediaUrl      String?
-  mediaType     String   // image | video | text
+  mediaType     String      // image | video | text
   textContent   String?
-  textBgColor   String?  @default("#121212")
-  privacy       String   @default("everyone") // everyone | followers | close_friends
-  createdAt     DateTime @default(now())
+  textBgColor   String?     @default("#121212")
+  audioTitle    String?
+  audioUrl      String?
+  privacy       String      @default("everyone") // everyone | followers | close_friends
+  createdAt     DateTime    @default(now())
   expiresAt     DateTime
+  views         StoryView[]
 
   @@index([authorAddress])
   @@index([expiresAt])
@@ -342,10 +286,12 @@ model Share {
 model Audio {
   id           String   @id @default(uuid())
   title        String
-  artist       String   @default("Original Audio")
+  artist       String   @default("Original Artist")
   url          String
-  duration     Int      @default(15)
+  duration     Int      @default(30)
   thumbnailUrl String   @default("")
+  category     String   @default("Bollywood") // Bollywood | Punjabi | Haryanvi | Rajasthani | Hindi | English | Instrumental | Trending
+  language     String   @default("Hindi")
   useCount     Int      @default(0)
   trendGrowth  Float    @default(0.0)
   status       String   @default("trending") // trending | rising | popular
@@ -398,3 +344,221 @@ model TrendingContent {
   rank        Int
   createdAt   DateTime @default(now())
 }
+
+model OtpVerification {
+  id           String   @id @default(uuid())
+  mobileNumber String   @unique
+  otpHash      String
+  expiresAt    DateTime
+  attempts     Int      @default(0)
+  requestedAt  DateTime @default(now())
+}
+
+model SavedPost {
+  id            String   @id @default(uuid())
+  userAddress   String
+  postId        String
+  post          Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@unique([userAddress, postId])
+  @@index([userAddress])
+  @@index([postId])
+}
+
+model StoryView {
+  id            String   @id @default(uuid())
+  storyId       String
+  story         Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewerAddress String
+  viewedAt      DateTime @default(now())
+
+  @@unique([storyId, viewerAddress])
+  @@index([storyId])
+  @@index([viewerAddress])
+}
+
+model Conversation {
+  id        String               @id @default(uuid())
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  members   ConversationMember[]
+  messages  Message[]
+}
+
+model ConversationMember {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userAddress    String
+  createdAt      DateTime     @default(now())
+
+  @@unique([conversationId, userAddress])
+  @@index([conversationId])
+  @@index([userAddress])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderAddress  String
+  content        String
+  read           Boolean      @default(false)
+  deletedBy      String       @default("") // Comma-separated user addresses who deleted this message for themselves
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([senderAddress])
+  @@index([createdAt])
+}
+
+model Report {
+  id              String   @id @default(uuid())
+  reporterAddress String
+  targetType      String   // POST | PULSE | PROFILE | COMMENT
+  targetId        String
+  reason          String
+  createdAt       DateTime @default(now())
+
+  @@index([reporterAddress])
+  @@index([targetId])
+}
+
+model Snap {
+  id              String    @id @default(uuid())
+  senderAddress   String
+  receiverAddress String
+  mediaUrl        String
+  mediaType       String    @default("image") // image | video
+  caption         String?
+  duration        Int       @default(6) // seconds
+  isOpened        Boolean   @default(false)
+  openedAt        DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([senderAddress])
+  @@index([receiverAddress])
+  @@index([createdAt])
+}
+
+model Streak {
+  id                    String    @id @default(uuid())
+  user1Address          String
+  user2Address          String
+  currentStreak         Int       @default(0)
+  lastUser1SnapAt       DateTime?
+  lastUser2SnapAt       DateTime?
+  lastStreakIncrementAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([user1Address, user2Address])
+  @@index([user1Address])
+  @@index([user2Address])
+}
+
+model HiringListing {
+  id               String          @id @default(uuid())
+  userAddress      String          @unique
+  fullName         String
+  email            String
+  phone            String
+  creatorType      String          // Video Creator | Influencer | Photographer | Developer | Model | Designer | Musician | Brand | Editor | Freelancer
+  listingType      String          @default("promotion") // promotion | hiring
+  category         String          @default("General") // Fashion | Tech | Comedy | Music | Travel | Fitness | Education | Food | Lifestyle | Gaming
+  location         String          @default("Jaipur, India")
+  isOpenForCollab  Boolean         @default(true)
+  startingPrice    Int             @default(1000)
+  services         String          @default("Story Promotion, Reel Promotion, Product Review, Brand Collaboration")
+  packages         String          @default("[{\"name\":\"Story\",\"price\":500},{\"name\":\"Post\",\"price\":1000},{\"name\":\"Reel\",\"price\":2000},{\"name\":\"Product Review\",\"price\":3000}]")
+  isNegotiable     Boolean         @default(true)
+  description      String
+  requests         HiringRequest[]
+  savedBy          SavedCreator[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([userAddress])
+  @@index([creatorType])
+  @@index([listingType])
+  @@index([location])
+  @@index([isOpenForCollab])
+}
+
+model HiringRequest {
+  id            String        @id @default(uuid())
+  listingId     String
+  listing       HiringListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  senderAddress String
+  senderName    String
+  senderEmail   String
+  senderPhone   String
+  service       String        @default("Brand Collaboration")
+  budget        Int           @default(2000)
+  deadline      String        @default("Within 7 days")
+  message       String
+  status        String        @default("pending") // pending | accepted | rejected | completed
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([listingId])
+  @@index([senderAddress])
+  @@index([status])
+}
+
+model SavedCreator {
+  id             String        @id @default(uuid())
+  userAddress    String
+  listingId      String
+  listing        HiringListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+
+  @@unique([userAddress, listingId])
+  @@index([userAddress])
+  @@index([listingId])
+}
+
+model Deal {
+  id               String         @id @default(uuid())
+  creatorAddress   String
+  clientAddress    String
+  service          String
+  price            Int
+  deliverables     String
+  deadline         String
+  description      String
+  status           String         @default("request") // request | negotiation | accepted | content_pending | review | completed | cancelled
+  currentOfferBy   String         @default("client") // client | creator
+  termsLocked      Boolean        @default(false)
+  deliverableUrl   String         @default("")
+  deliverableNotes String         @default("")
+  timelineUpdates  String         @default("[]") // JSON log of status and counter-offer history
+  reviews          CollabReview[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([creatorAddress])
+  @@index([clientAddress])
+  @@index([status])
+}
+
+model CollabReview {
+  id              String   @id @default(uuid())
+  dealId          String
+  deal            Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  reviewerAddress String
+  targetAddress   String
+  reviewerName    String   @default("Client")
+  rating          Int      @default(5) // 1 to 5
+  reviewText      String
+  createdAt       DateTime @default(now())
+
+  @@index([dealId])
+  @@index([targetAddress])
+  @@index([reviewerAddress])
+}
+
+
+
+

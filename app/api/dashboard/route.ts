@@ -6,37 +6,22 @@ export async function GET(req: NextRequest) {
   const address = searchParams.get("walletAddress")?.toLowerCase();
 
   if (!address) {
-    return NextResponse.json({ error: "Wallet address required" }, { status: 400 });
+    return NextResponse.json({ error: "User identifier required" }, { status: 400 });
   }
 
   const [
     totalPosts,
     totalFollowers,
     totalFollowing,
-    totalNfts,
-    totalVerified,
     userPosts,
-    userNfts,
-    userVerifications,
   ] = await Promise.all([
     prisma.post.count({ where: { authorAddress: address } }),
     prisma.follow.count({ where: { followingAddress: address } }),
     prisma.follow.count({ where: { followerAddress: address } }),
-    prisma.nFT.count({ where: { ownerAddress: address } }),
-    prisma.contentVerification.count({ where: { authorAddress: address } }),
     prisma.post.findMany({
       where: { authorAddress: address },
-      include: { likes: true, comments: true, verifications: true, nfts: true },
+      include: { likes: true, comments: true },
       orderBy: { createdAt: "desc" },
-    }),
-    prisma.nFT.findMany({
-      where: { ownerAddress: address },
-      include: { post: true },
-    }),
-    prisma.contentVerification.findMany({
-      where: { authorAddress: address },
-      include: { post: true },
-      orderBy: { verifiedAt: "desc" },
     }),
   ]);
 
@@ -65,8 +50,8 @@ export async function GET(req: NextRequest) {
       totalPosts,
       totalFollowers,
       totalFollowing,
-      totalNfts,
-      totalVerified,
+      totalNfts: 0,
+      totalVerified: totalPosts,
       totalLikes,
       totalComments,
       totalViews,
@@ -75,7 +60,7 @@ export async function GET(req: NextRequest) {
     },
     engagementTrend,
     recentPosts: userPosts.slice(0, 5),
-    nfts: userNfts,
-    verifications: userVerifications,
+    nfts: [],
+    verifications: [],
   });
 }

@@ -19,7 +19,6 @@ import {
   VolumeX,
   Grid
 } from "lucide-react";
-import { useWeb3 } from "../../lib/web3Context";
 
 export const dynamic = "force-dynamic";
 
@@ -115,15 +114,15 @@ function ExploreContent() {
           </div>
         </div>
 
-        {/* Search Input */}
-        <div className="relative">
-          <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+        {/* Search Input Capsule */}
+        <div className="relative group">
+          <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#00B7FF] transition-colors" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search wallet hashes (0x...), @username, #hashtags, sound titles..."
-            className="w-full pl-12 pr-4 py-4 text-xs font-bold rounded-2xl bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-[#00B7FF] shadow-lg shadow-slate-950/5 focus:shadow-cyan-500/5 transition-all"
+            className="w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-full glass-card text-slate-900 dark:text-slate-100 focus:outline-none focus:border-[#00B7FF] focus:scale-[1.01] shadow-glass focus:shadow-glass-strong transition-all"
           />
         </div>
 
@@ -135,14 +134,13 @@ function ExploreContent() {
               onClick={() => {
                 setActiveTab(tab);
                 if (tab !== "all" && query === "") {
-                  // Trigger search fallback initialization
                   handleSearch("");
                 }
               }}
-              className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all border shrink-0 ${
+              className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-full transition-all border shrink-0 btn-tactile ${
                 activeTab === tab
-                  ? "bg-[#00B7FF] border-[#00B7FF] text-white shadow-md shadow-[#00B7FF]/15"
-                  : "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-white"
+                  ? "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] border-transparent text-slate-950 shadow-md"
+                  : "glass-panel border-white/40 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
               {tab}

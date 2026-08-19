@@ -22,15 +22,13 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const profileMap = new Map(profiles.map((p) => [p.userId, p]));
-
   const enrichedNotifications = notifications.map((n) => {
     const senderProfile = profiles.find((p) => p.userId === n.senderAddress || p.id === n.senderAddress);
     return {
       ...n,
       senderProfile: senderProfile || {
-        username: `creator_${n.senderAddress.slice(2, 8)}`,
-        displayName: `Web3 Creator ${n.senderAddress.slice(0, 6)}`,
+        username: `user_${n.senderAddress.slice(0, 8)}`,
+        displayName: `Creator ${n.senderAddress.slice(0, 6)}`,
         avatarUrl: "",
       },
     };

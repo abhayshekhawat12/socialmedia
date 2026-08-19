@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,11 +14,30 @@ export async function POST(req: NextRequest) {
     const pinataJwt = process.env.PINATA_JWT;
 
     if (!pinataJwt) {
-      // Return synthetic IPFS hash for fallback
+      // Fallback: Save file to local public/uploads directory
+      const bytes = await file.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+
+      const uploadDir = path.join(process.cwd(), "public", "uploads");
+      await fs.mkdir(uploadDir, { recursive: true });
+
+      const fileExtension = path.extname(file.name) || ".png";
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 15)}${fileExtension}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await fs.writeFile(filePath, buffer);
+
+      const localUrl = `/uploads/${fileName}`;
       const fakeCID = 'Qm' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      return NextResponse.json({ cid: fakeCID, isMock: true });
+      
+      return NextResponse.json({ 
+        cid: fakeCID, 
+        url: localUrl, 
+        isMock: true 
+      });
     }
 
+    // Direct Pinata upload if key is active
     const pinataFormData = new FormData();
     pinataFormData.append('file', file);
 
@@ -34,8 +55,12 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json();
-    return NextResponse.json({ cid: data.IpfsHash });
+    return NextResponse.json({ 
+      cid: data.IpfsHash,
+      url: `https://gateway.pinata.cloud/ipfs/${data.IpfsHash}`
+    });
   } catch (error: any) {
+    console.error("IPFS File Upload Route Error:", error);
     return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
   }
 }

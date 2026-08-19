@@ -17,23 +17,22 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
     });
 
-    const verifiedPosts = await prisma.post.findMany({
-      where: { verifications: { some: { verificationStatus: "VERIFIED" } } },
+    const trendingPosts = await prisma.post.findMany({
       take: 12,
-      orderBy: { createdAt: "desc" },
-      include: { verifications: true, likes: true, comments: true },
+      orderBy: { likeCount: "desc" },
+      include: { likes: true, comments: true },
     });
 
     return NextResponse.json({
       trendingHashtags: hashtags,
       trendingCreators: topProfiles,
-      trendingPosts: verifiedPosts,
+      trendingPosts,
     });
   }
 
   const cleanQuery = query.startsWith("#") ? query.slice(1).toLowerCase() : query.toLowerCase();
 
-  const [users, posts, hashtags, verifiedRecords] = await Promise.all([
+  const [users, posts, hashtags] = await Promise.all([
     prisma.profile.findMany({
       where: {
         OR: [
@@ -50,21 +49,15 @@ export async function GET(req: NextRequest) {
         OR: [
           { caption: { contains: query } },
           { location: { contains: query } },
-          { contentHash: { contains: query } },
         ],
       },
       take: 20,
       orderBy: { createdAt: "desc" },
-      include: { verifications: true, nfts: true },
+      include: { likes: true, comments: true },
     }),
     prisma.hashtag.findMany({
       where: { tag: { contains: cleanQuery } },
       take: 10,
-    }),
-    prisma.contentVerification.findMany({
-      where: { contentHash: { contains: query } },
-      take: 5,
-      include: { post: true },
     }),
   ]);
 
@@ -72,6 +65,6 @@ export async function GET(req: NextRequest) {
     users,
     posts,
     hashtags,
-    verifiedRecords,
+    verifiedRecords: [],
   });
 }

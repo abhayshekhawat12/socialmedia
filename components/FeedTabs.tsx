@@ -1,27 +1,31 @@
 'use client';
 
 import React, { useState } from 'react';
+import { audioHaptics } from '../lib/audioHaptics';
 
 interface FeedTabsProps {
-  onTabChange?: (tab: string) => void;
+  activeTab?: 'posts' | 'stories' | 'reels';
+  onTabChange?: (tab: 'posts' | 'stories' | 'reels') => void;
 }
 
-export const FeedTabs: React.FC<FeedTabsProps> = ({ onTabChange }) => {
-  const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'reels'>('posts');
+export const FeedTabs: React.FC<FeedTabsProps> = ({ activeTab: controlledTab, onTabChange }) => {
+  const [internalTab, setInternalTab] = useState<'posts' | 'stories' | 'reels'>('posts');
+  const activeTab = controlledTab || internalTab;
 
   const handleSelect = (tab: 'posts' | 'stories' | 'reels') => {
-    setActiveTab(tab);
+    audioHaptics.playTap();
+    setInternalTab(tab);
     if (onTabChange) onTabChange(tab);
   };
 
   return (
-    <div className="w-full bg-[#EBF0F5] dark:bg-slate-800/80 p-1 rounded-full flex items-center justify-between text-xs font-extrabold shadow-inner">
+    <div className="w-full glass-panel p-1 rounded-full flex items-center justify-between text-xs font-black shadow-sm border border-white/60 dark:border-white/10">
       <button
         onClick={() => handleSelect('posts')}
-        className={`flex-1 py-2.5 rounded-full transition-all duration-200 text-center cursor-pointer ${
+        className={`flex-1 py-2 rounded-full transition-all duration-200 text-center cursor-pointer btn-tactile ${
           activeTab === 'posts'
-            ? 'bg-[#00B7FF] text-white shadow-md shadow-[#00B7FF]/20'
-            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+            ? 'bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black shadow-md shadow-cyan-500/20'
+            : 'text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white'
         }`}
       >
         Social Posts
@@ -29,10 +33,10 @@ export const FeedTabs: React.FC<FeedTabsProps> = ({ onTabChange }) => {
 
       <button
         onClick={() => handleSelect('stories')}
-        className={`flex-1 py-2.5 rounded-full transition-all duration-200 text-center cursor-pointer ${
+        className={`flex-1 py-2 rounded-full transition-all duration-200 text-center cursor-pointer btn-tactile ${
           activeTab === 'stories'
-            ? 'bg-[#00B7FF] text-white shadow-md shadow-[#00B7FF]/20'
-            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+            ? 'bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black shadow-md shadow-cyan-500/20'
+            : 'text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white'
         }`}
       >
         Stories
@@ -40,13 +44,13 @@ export const FeedTabs: React.FC<FeedTabsProps> = ({ onTabChange }) => {
 
       <button
         onClick={() => handleSelect('reels')}
-        className={`flex-1 py-2.5 rounded-full transition-all duration-200 text-center cursor-pointer ${
+        className={`flex-1 py-2 rounded-full transition-all duration-200 text-center cursor-pointer btn-tactile ${
           activeTab === 'reels'
-            ? 'bg-[#00B7FF] text-white shadow-md shadow-[#00B7FF]/20'
-            : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+            ? 'bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black shadow-md shadow-cyan-500/20'
+            : 'text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white'
         }`}
       >
-        Short Videos
+        Reels
       </button>
     </div>
   );
