@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, Compass, Plus, PlaySquare, User } from "lucide-react";
+import { Home, Compass, Plus, MessageCircle, User } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
 import { CreateActionSheet } from "./CreateActionSheet";
@@ -21,7 +21,7 @@ export const MobileBottomNav: React.FC = () => {
 
   const isHome = pathname === "/feed" || pathname === "/";
   const isExplore = pathname.startsWith("/explore");
-  const isReels = pathname.startsWith("/pulse");
+  const isChats = pathname.startsWith("/chats");
   const isProfile = pathname.startsWith("/profile");
 
   const handleSelectCreateType = (type: "post" | "reel" | "story") => {
@@ -79,18 +79,18 @@ export const MobileBottomNav: React.FC = () => {
             <Plus className="w-6 h-6 stroke-[3]" />
           </button>
 
-          {/* 4. Reels */}
+          {/* 4. Messages (Direct Chat Access in Bottom Nav) */}
           <Link
-            href="/pulse"
+            href="/chats"
             onClick={() => audioHaptics.playNav()}
-            className={`flex flex-col items-center justify-center p-2.5 rounded-2xl transition-all btn-tactile ${
-              isReels
+            className={`flex flex-col items-center justify-center p-2.5 rounded-2xl transition-all btn-tactile relative ${
+              isChats
                 ? "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black shadow-md shadow-cyan-500/25 scale-105"
                 : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
-            title="Reels"
+            title="Messages"
           >
-            <PlaySquare className={`w-5 h-5 ${isReels ? "stroke-[2.8]" : "stroke-[2.2]"}`} />
+            <MessageCircle className={`w-5 h-5 ${isChats ? "stroke-[2.8]" : "stroke-[2.2]"}`} />
           </Link>
 
           {/* 5. Profile */}

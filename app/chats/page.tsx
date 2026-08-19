@@ -76,24 +76,36 @@ export default function ChatsPage() {
   // AI Memory query & list
   const [memoryQuery, setMemoryQuery] = useState('');
   const [memoryResults, setMemoryResults] = useState<MemoryEntry[]>(aiMemoryService.getMemories());
-  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const initialConvoId = searchParams?.get("conversationId") || null;
+  const initialTargetAddress = searchParams?.get("targetAddress") || null;
 
   // Fetch Conversations and Message Thread from Supabase
   const fetchChatsAndMessages = async () => {
+    if (!account) return;
     try {
       const headers: any = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const chatsRes = await fetch("/api/chats", { headers });
+      const chatsRes = await fetch(`/api/chats?userAddress=${account}`, { headers });
       if (chatsRes.ok) {
         const chatsData = await chatsRes.json();
-        setConversations(chatsData.chats || []);
+        const chatList = chatsData.chats || [];
+        setConversations(chatList);
+
+        if (!activeChat && initialConvoId) {
+          setActiveChat(initialConvoId);
+        } else if (!activeChat && initialTargetAddress) {
+          handleStartChat(initialTargetAddress);
+        } else if (!activeChat && chatList.length > 0 && typeof window !== "undefined" && window.innerWidth >= 768) {
+          setActiveChat(chatList[0].id);
+        }
       }
 
       if (activeChat) {
-        const msgRes = await fetch(`/api/chats/messages?conversationId=${activeChat}`, { headers });
+        const msgRes = await fetch(`/api/chats/messages?conversationId=${activeChat}&userAddress=${account}`, { headers });
         if (msgRes.ok) {
           const msgData = await msgRes.json();
           setMessages(msgData.messages || []);
@@ -158,7 +170,7 @@ export default function ChatsPage() {
       const res = await fetch("/api/chats", {
         method: "POST",
         headers,
-        body: JSON.stringify({ targetAddress })
+        body: JSON.stringify({ targetAddress, userAddress: account })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to start chat.");
@@ -180,7 +192,7 @@ export default function ChatsPage() {
       const headers: any = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch(`/api/chats?conversationId=${activeChat}`, {
+      const res = await fetch(`/api/chats?conversationId=${activeChat}&userAddress=${account}`, {
         method: "DELETE",
         headers
       });
@@ -198,7 +210,7 @@ export default function ChatsPage() {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!inputText.trim() || !activeChat) return;
+    if (!inputText.trim() || !activeChat || !account) return;
 
     if (editingMsgId) {
       setMessages((prev) =>
@@ -214,23 +226,27 @@ export default function ChatsPage() {
       const headers: any = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      const sentText = inputText.trim();
+      setInputText('');
+
       const res = await fetch("/api/chats/messages", {
         method: "POST",
         headers,
         body: JSON.stringify({
           conversationId: activeChat,
-          content: inputText.trim()
-        })
+          content: sentText,
+          userAddress: account,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send message.");
 
-      setMessages((prev) => [...prev, data.message]);
-      setInputText('');
-      setReplyingTo(null);
-      setIsEmojiOpen(false);
-    } catch (err: any) {
-      console.error(err);
+      const data = await res.json();
+      if (res.ok && data.message) {
+        setMessages((prev) => [...prev, data.message]);
+        setReplyingTo(null);
+        setIsEmojiOpen(false);
+      }
+    } catch (e) {
+      console.error("Send message error:", e);
     }
   };
 

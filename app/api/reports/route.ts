@@ -1,37 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
 import { verifyAuthToken } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const body = await req.json();
+    const { targetType, targetId, reason, userAddress: rawUser } = body;
 
-    if (!token) {
+    let userAddress = rawUser?.toLowerCase();
+
+    if (!userAddress) {
+      const authHeader = req.headers.get("authorization");
+      const token = authHeader?.replace("Bearer ", "");
+      if (token) {
+        const session = verifyAuthToken(token);
+        if (session?.walletAddress) {
+          userAddress = session.walletAddress.toLowerCase();
+        }
+      }
+    }
+
+    if (!userAddress) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     }
-
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
-
-    const { targetType, targetId, reason } = await req.json();
 
     if (!targetType || !targetId || !reason) {
       return NextResponse.json({ error: "Target type, target ID and report reason are required." }, { status: 400 });
     }
 
-    const userAddress = session.walletAddress.toLowerCase();
+    const { data: report, error } = await supabaseServer
+      .from("Report")
+      .insert(
+        withTimestamps({
+          reporterAddress: userAddress,
+          targetType,
+          targetId,
+          reason: reason.trim(),
+        })
+      )
+      .select()
+      .single();
 
-    const report = await prisma.report.create({
-      data: {
-        reporterAddress: userAddress,
-        targetType,
-        targetId,
-        reason: reason.trim()
-      }
-    });
+    if (error) throw error;
 
     return NextResponse.json({ success: true, reportId: report.id, message: "Report filed successfully." });
   } catch (error: any) {

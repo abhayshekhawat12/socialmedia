@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 import { matchCreatorsWithAI } from "@/lib/aiCreatorMatch";
 
 export const dynamic = "force-dynamic";
@@ -16,32 +16,46 @@ export async function POST(req: NextRequest) {
     const combinedQuery = `${prompt} ${campaignDescription || ""}`.trim();
 
     // Fetch all creator listings
-    const listings = await prisma.hiringListing.findMany({
-      orderBy: { createdAt: "desc" },
-    });
+    const { data: listingsData } = await supabaseServer
+      .from("HiringListing")
+      .select("*")
+      .order("createdAt", { ascending: false });
+
+    const listings = listingsData || [];
 
     // Populate user profile info
-    const userAddresses = Array.from(new Set(listings.map((l) => l.userAddress.toLowerCase())));
-    const profiles = await prisma.profile.findMany({
-      where: { user: { walletAddress: { in: userAddresses } } },
-      include: { user: true },
-    });
+    const userAddresses = Array.from(new Set(listings.map((l: any) => l.userAddress.toLowerCase())));
+    let profiles: any[] = [];
+    if (userAddresses.length > 0) {
+      const { data: profs } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profs || [];
+    }
 
     const profileMap = new Map<string, any>();
-    profiles.forEach((p) => {
-      if (p.user?.walletAddress) {
-        profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      }
+    profiles.forEach((p: any) => {
+      if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     });
 
-    const enriched = listings.map((l) => {
+    const enriched = listings.map((l: any) => {
       const p = profileMap.get(l.userAddress.toLowerCase());
+      let parsedPackages = [];
+      try {
+        parsedPackages = typeof l.packages === "string" ? JSON.parse(l.packages) : l.packages || [];
+      } catch {
+        parsedPackages = [];
+      }
+
       return {
         ...l,
+        packages: parsedPackages,
         profile: {
           username: p?.username || `user_${l.userAddress.slice(0, 8)}`,
           displayName: p?.displayName || l.fullName,
-          avatarUrl: p?.avatarUrl || "",
+          avatarUrl: p?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${l.userAddress}`,
         },
       };
     });

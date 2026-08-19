@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { Sparkles, Check, TrendingUp, Search } from "lucide-react";
+import { Sparkles, Check, TrendingUp, Search, MessageCircle } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
 import { creatorService } from "../lib/services/dataService";
@@ -117,16 +117,26 @@ export const RightSidebar: React.FC = () => {
                   </div>
                 </Link>
 
-                <button
-                  onClick={() => handleToggleFollow(creator.walletAddress)}
-                  className={`px-3.5 py-1.5 rounded-full text-[11px] font-black transition btn-tactile shrink-0 cursor-pointer ${
-                    isFollowing
-                      ? "glass-pill text-slate-500 hover:text-rose-500"
-                      : "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 shadow-sm"
-                  }`}
-                >
-                  {isFollowing ? "Following" : "Follow"}
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Link
+                    href={`/chats?targetAddress=${creator.walletAddress}`}
+                    className="p-1.5 rounded-full glass-pill text-[#00B7FF] hover:bg-cyan-500/10 transition cursor-pointer"
+                    title="Direct Message"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                  </Link>
+
+                  <button
+                    onClick={() => handleToggleFollow(creator.walletAddress)}
+                    className={`px-3 py-1 rounded-full text-[11px] font-black transition btn-tactile cursor-pointer ${
+                      isFollowing
+                        ? "glass-pill text-slate-500 hover:text-rose-500"
+                        : "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 shadow-sm"
+                    }`}
+                  >
+                    {isFollowing ? "Following" : "Follow"}
+                  </button>
+                </div>
               </div>
             );
           })}

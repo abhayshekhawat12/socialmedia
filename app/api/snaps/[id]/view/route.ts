@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withUpdatedTimestamp } from "@/lib/supabaseServer";
 
-// POST /api/snaps/[id]/view - Mark a snap as opened/viewed
+export const dynamic = "force-dynamic";
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -12,13 +13,19 @@ export async function POST(
       return NextResponse.json({ error: "snapId is required" }, { status: 400 });
     }
 
-    const snap = await prisma.snap.update({
-      where: { id: snapId },
-      data: {
-        isOpened: true,
-        openedAt: new Date(),
-      },
-    });
+    const { data: snap, error } = await supabaseServer
+      .from("Snap")
+      .update(
+        withUpdatedTimestamp({
+          isOpened: true,
+          openedAt: new Date().toISOString(),
+        })
+      )
+      .eq("id", snapId)
+      .select()
+      .single();
+
+    if (error) throw error;
 
     return NextResponse.json({
       success: true,

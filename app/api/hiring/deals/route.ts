@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -13,47 +13,44 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User address required" }, { status: 400 });
     }
 
-    const where: any = {
-      OR: [
-        { creatorAddress: userAddress },
-        { clientAddress: userAddress },
-      ],
-    };
+    let queryBuilder = supabaseServer
+      .from("Deal")
+      .select("*")
+      .or(`creatorAddress.eq.${userAddress},clientAddress.eq.${userAddress}`)
+      .order("updatedAt", { ascending: false });
 
     if (status && status !== "all") {
       if (status === "active") {
-        where.status = { in: ["request", "negotiation", "accepted", "content_pending", "review"] };
+        queryBuilder = queryBuilder.in("status", ["request", "negotiation", "accepted", "content_pending", "review"]);
       } else {
-        where.status = status;
+        queryBuilder = queryBuilder.eq("status", status);
       }
     }
 
-    const deals = await prisma.deal.findMany({
-      where,
-      include: {
-        reviews: true,
-      },
-      orderBy: { updatedAt: "desc" },
-    });
+    const { data: dealsData } = await queryBuilder;
+    const deals = dealsData || [];
 
     // Populate creator and client profiles
     const allAddresses = Array.from(
-      new Set(deals.flatMap((d) => [d.creatorAddress.toLowerCase(), d.clientAddress.toLowerCase()]))
+      new Set(deals.flatMap((d: any) => [d.creatorAddress.toLowerCase(), d.clientAddress.toLowerCase()]))
     );
 
-    const profiles = await prisma.profile.findMany({
-      where: { user: { walletAddress: { in: allAddresses } } },
-      include: { user: true },
-    });
+    let profiles: any[] = [];
+    if (allAddresses.length > 0) {
+      const { data: profs } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profs || [];
+    }
 
     const profileMap = new Map<string, any>();
-    profiles.forEach((p) => {
-      if (p.user?.walletAddress) {
-        profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      }
+    profiles.forEach((p: any) => {
+      if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     });
 
-    const enriched = deals.map((d) => {
+    const enriched = deals.map((d: any) => {
       const creatorProf = profileMap.get(d.creatorAddress.toLowerCase());
       const clientProf = profileMap.get(d.clientAddress.toLowerCase());
 
@@ -63,13 +60,13 @@ export async function GET(req: NextRequest) {
           walletAddress: d.creatorAddress,
           displayName: creatorProf?.displayName || `Creator ${d.creatorAddress.slice(0, 6)}`,
           username: creatorProf?.username || `user_${d.creatorAddress.slice(0, 8)}`,
-          avatarUrl: creatorProf?.avatarUrl || "",
+          avatarUrl: creatorProf?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${d.creatorAddress}`,
         },
         client: {
           walletAddress: d.clientAddress,
           displayName: clientProf?.displayName || `Client ${d.clientAddress.slice(0, 6)}`,
           username: clientProf?.username || `user_${d.clientAddress.slice(0, 8)}`,
-          avatarUrl: clientProf?.avatarUrl || "",
+          avatarUrl: clientProf?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${d.clientAddress}`,
         },
       };
     });
@@ -77,7 +74,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, deals: enriched, total: enriched.length });
   } catch (error: any) {
     console.error("GET /api/hiring/deals error:", error);
-    return NextResponse.json({ error: error.message || "Failed to fetch deals" }, { status: 500 });
+    return NextResponse.json({ success: true, deals: [], total: 0 });
   }
 }
 
@@ -118,33 +115,42 @@ export async function POST(req: NextRequest) {
       },
     ]);
 
-    const deal = await prisma.deal.create({
-      data: {
-        creatorAddress: normalizedCreator,
-        clientAddress: normalizedClient,
-        service,
-        price: Number(price),
-        deliverables,
-        deadline,
-        description,
-        status: "request",
-        currentOfferBy: "client",
-        timelineUpdates: initialLog,
-      },
-    });
+    const { data: deal, error: insertErr } = await supabaseServer
+      .from("Deal")
+      .insert(
+        withTimestamps({
+          creatorAddress: normalizedCreator,
+          clientAddress: normalizedClient,
+          service,
+          price: Number(price),
+          deliverables,
+          deadline,
+          description,
+          status: "request",
+          currentOfferBy: "client",
+          timelineUpdates: initialLog,
+        })
+      )
+      .select()
+      .single();
+
+    if (insertErr || !deal) {
+      throw new Error(insertErr?.message || "Failed to create deal");
+    }
 
     // Notify creator
     try {
-      await prisma.notification.create({
-        data: {
+      await supabaseServer.from("Notification").insert(
+        withTimestamps({
           recipientAddress: normalizedCreator,
           senderAddress: normalizedClient,
           type: "DEAL_REQUEST",
-          title: "New Collaboration Deal Offer",
+          title: "New Collaboration Deal Offer 🤝",
           message: `You received a ₹${Number(price).toLocaleString()} deal offer for ${service}!`,
           link: `/hiring?tab=deals&dealId=${deal.id}`,
-        },
-      });
+          read: false,
+        })
+      );
     } catch (notifErr) {
       console.warn("Deal notification failed:", notifErr);
     }

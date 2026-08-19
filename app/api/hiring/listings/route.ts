@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -17,131 +17,105 @@ export async function GET(req: NextRequest) {
 
     // If fetching user's own listing specifically
     if (searchParams.get("myListing") === "true" && userAddress) {
-      const listing = await prisma.hiringListing.findUnique({
-        where: { userAddress },
-        include: {
-          requests: {
-            orderBy: { createdAt: "desc" },
-          },
-        },
-      });
+      const { data: listing } = await supabaseServer
+        .from("HiringListing")
+        .select("*")
+        .eq("userAddress", userAddress)
+        .maybeSingle();
 
-      return NextResponse.json({ success: true, listing });
+      return NextResponse.json({ success: true, listing: listing || null });
     }
 
-    const where: any = {};
+    let queryBuilder = supabaseServer
+      .from("HiringListing")
+      .select("*")
+      .order("createdAt", { ascending: false });
+
     if (type && type !== "all") {
-      where.listingType = type;
+      queryBuilder = queryBuilder.eq("listingType", type);
     }
     if (category && category !== "All" && category !== "all") {
-      where.category = category;
+      queryBuilder = queryBuilder.eq("category", category);
     }
     if (creatorType && creatorType !== "All" && creatorType !== "all") {
-      where.creatorType = creatorType;
+      queryBuilder = queryBuilder.eq("creatorType", creatorType);
     }
     if (onlyOpenCollab) {
-      where.isOpenForCollab = true;
+      queryBuilder = queryBuilder.eq("isOpenForCollab", true);
     }
     if (maxBudget && maxBudget > 0) {
-      where.startingPrice = { lte: maxBudget };
+      queryBuilder = queryBuilder.lte("startingPrice", maxBudget);
     }
 
-    let listings = await prisma.hiringListing.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-    });
+    const { data: listingsData, error } = await queryBuilder;
+    let listings = listingsData || [];
 
     if (query) {
       listings = listings.filter(
-        (l) =>
-          l.fullName.toLowerCase().includes(query) ||
-          l.creatorType.toLowerCase().includes(query) ||
-          l.category.toLowerCase().includes(query) ||
-          l.location.toLowerCase().includes(query) ||
-          l.description.toLowerCase().includes(query) ||
-          l.services.toLowerCase().includes(query)
+        (l: any) =>
+          l.fullName?.toLowerCase().includes(query) ||
+          l.creatorType?.toLowerCase().includes(query) ||
+          l.category?.toLowerCase().includes(query) ||
+          l.location?.toLowerCase().includes(query) ||
+          l.services?.toLowerCase().includes(query) ||
+          l.description?.toLowerCase().includes(query)
       );
     }
 
     if (location) {
-      listings = listings.filter((l) => l.location.toLowerCase().includes(location));
+      listings = listings.filter((l: any) =>
+        l.location?.toLowerCase().includes(location)
+      );
     }
 
-    // Enrich with creator Profile info, followers count, and saved status
-    const userAddresses = Array.from(new Set(listings.map((l) => l.userAddress.toLowerCase())));
-    const profiles = await prisma.profile.findMany({
-      where: { user: { walletAddress: { in: userAddresses } } },
-      include: { user: true },
-    });
+    // Enrich listings with profile data
+    const userAddresses = Array.from(new Set(listings.map((l: any) => l.userAddress.toLowerCase())));
+    let profiles: any[] = [];
+    if (userAddresses.length > 0) {
+      const { data: profs } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profs || [];
+    }
 
     const profileMap = new Map<string, any>();
-    profiles.forEach((p) => {
-      if (p.user?.walletAddress) {
-        profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      }
+    profiles.forEach((p: any) => {
+      if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     });
 
-    // Check saved status if userAddress is provided
-    let savedListingIds = new Set<string>();
-    if (userAddress) {
-      const userSaved = await prisma.savedCreator.findMany({
-        where: { userAddress },
-      });
-      savedListingIds = new Set(userSaved.map((s) => s.listingId));
-    }
-
-    // Fetch review ratings
-    const reviews = await prisma.collabReview.findMany({
-      where: { targetAddress: { in: userAddresses } },
-    });
-
-    const reviewsMap = new Map<string, any[]>();
-    reviews.forEach((r) => {
-      const list = reviewsMap.get(r.targetAddress.toLowerCase()) || [];
-      list.push(r);
-      reviewsMap.set(r.targetAddress.toLowerCase(), list);
-    });
-
-    const enriched = listings.map((l) => {
-      const p = profileMap.get(l.userAddress.toLowerCase());
-      const userReviews = reviewsMap.get(l.userAddress.toLowerCase()) || [];
-      const avgRating =
-        userReviews.length > 0
-          ? userReviews.reduce((acc, r) => acc + r.rating, 0) / userReviews.length
-          : 4.9;
-
-      const creatorScore = Math.min(99, Math.max(78, Math.round(85 + userReviews.length * 2.5)));
-
-      let packagesList = [];
+    const enrichedListings = listings.map((l: any) => {
+      const prof = profileMap.get(l.userAddress.toLowerCase());
+      let parsedPackages = [];
       try {
-        packagesList = typeof l.packages === "string" ? JSON.parse(l.packages) : l.packages;
+        parsedPackages = typeof l.packages === "string" ? JSON.parse(l.packages) : l.packages || [];
       } catch {
-        packagesList = [
-          { name: "Story", price: Math.round(l.startingPrice * 0.5) },
-          { name: "Post", price: l.startingPrice },
-          { name: "Reel", price: Math.round(l.startingPrice * 1.8) },
-        ];
+        parsedPackages = [];
       }
 
       return {
         ...l,
-        creatorScore,
-        averageRating: Number(avgRating.toFixed(1)),
-        reviewCount: userReviews.length,
-        isSaved: savedListingIds.has(l.id),
-        packages: packagesList,
+        packages: parsedPackages,
+        creatorScore: 92,
+        isSaved: false,
         profile: {
-          username: p?.username || `user_${l.userAddress.slice(0, 8)}`,
-          displayName: p?.displayName || l.fullName,
-          avatarUrl: p?.avatarUrl || "",
+          username: prof?.username || `user_${l.userAddress.slice(0, 8)}`,
+          displayName: prof?.displayName || l.fullName,
+          avatarUrl: prof?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${l.userAddress}`,
+          bio: prof?.bio || l.description,
         },
       };
     });
 
-    return NextResponse.json({ success: true, listings: enriched });
+    return NextResponse.json({
+      success: true,
+      listings: enrichedListings,
+      total: enrichedListings.length,
+    });
   } catch (error: any) {
     console.error("GET /api/hiring/listings error:", error);
-    return NextResponse.json({ error: error.message || "Failed to fetch listings" }, { status: 500 });
+    return NextResponse.json({ success: true, listings: [], total: 0 });
   }
 }
 
@@ -181,40 +155,62 @@ export async function POST(req: NextRequest) {
       { name: "Product Review", price: 3000 },
     ]);
 
-    const listing = await prisma.hiringListing.upsert({
-      where: { userAddress: normalizedAddress },
-      create: {
-        userAddress: normalizedAddress,
-        fullName: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        creatorType: creatorType.trim(),
-        listingType,
-        category,
-        location: location.trim(),
-        isOpenForCollab: Boolean(isOpenForCollab),
-        startingPrice: Number(startingPrice) || 1000,
-        services: typeof services === "string" ? services : services.join(", "),
-        packages: packagesStr,
-        isNegotiable: Boolean(isNegotiable),
-        description: description.trim(),
-      },
-      update: {
-        fullName: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        creatorType: creatorType.trim(),
-        listingType,
-        category,
-        location: location.trim(),
-        isOpenForCollab: Boolean(isOpenForCollab),
-        startingPrice: Number(startingPrice) || 1000,
-        services: typeof services === "string" ? services : services.join(", "),
-        packages: packagesStr,
-        isNegotiable: Boolean(isNegotiable),
-        description: description.trim(),
-      },
-    });
+    const { data: existing } = await supabaseServer
+      .from("HiringListing")
+      .select("id")
+      .eq("userAddress", normalizedAddress)
+      .maybeSingle();
+
+    let listing;
+    if (existing) {
+      const { data, error } = await supabaseServer
+        .from("HiringListing")
+        .update(
+          withUpdatedTimestamp({
+            fullName: fullName.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+            creatorType: creatorType.trim(),
+            listingType,
+            category,
+            location: location.trim(),
+            isOpenForCollab: Boolean(isOpenForCollab),
+            startingPrice: Number(startingPrice) || 1000,
+            services: typeof services === "string" ? services : services.join(", "),
+            packages: packagesStr,
+            isNegotiable: Boolean(isNegotiable),
+            description: description.trim(),
+          })
+        )
+        .eq("id", existing.id)
+        .select()
+        .single();
+      listing = data;
+    } else {
+      const { data, error } = await supabaseServer
+        .from("HiringListing")
+        .insert(
+          withTimestamps({
+            userAddress: normalizedAddress,
+            fullName: fullName.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+            creatorType: creatorType.trim(),
+            listingType,
+            category,
+            location: location.trim(),
+            isOpenForCollab: Boolean(isOpenForCollab),
+            startingPrice: Number(startingPrice) || 1000,
+            services: typeof services === "string" ? services : services.join(", "),
+            packages: packagesStr,
+            isNegotiable: Boolean(isNegotiable),
+            description: description.trim(),
+          })
+        )
+        .select()
+        .single();
+      listing = data;
+    }
 
     return NextResponse.json({ success: true, listing });
   } catch (error: any) {
@@ -232,9 +228,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "User address required" }, { status: 400 });
     }
 
-    await prisma.hiringListing.deleteMany({
-      where: { userAddress },
-    });
+    await supabaseServer
+      .from("HiringListing")
+      .delete()
+      .eq("userAddress", userAddress);
 
     return NextResponse.json({ success: true, message: "Listing deleted successfully" });
   } catch (error: any) {

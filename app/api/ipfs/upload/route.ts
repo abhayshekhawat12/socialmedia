@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
 import crypto from "crypto";
-import { prisma } from "@/lib/prisma";
-import { supabase } from "@/lib/supabase";
+import path from "path";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,60 +18,43 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(bytes);
 
     const fileExtension = path.extname(file.name) || (file.type.startsWith("video/") ? ".mp4" : ".png");
-    const cleanFileName = `${Date.now()}_${Math.random().toString(36).substring(2, 12)}${fileExtension}`;
+    const cleanFileName = `uploads/${Date.now()}_${Math.random().toString(36).substring(2, 12)}${fileExtension}`;
     const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
     const cid = "Qm" + crypto.createHash("md5").update(buffer).digest("hex") + fileHash.slice(0, 28);
 
+    const mimeType = file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png");
+
     let mediaUrl = "";
-
-    // 1. Try local disk upload (local dev)
     try {
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
-      await fs.mkdir(uploadDir, { recursive: true });
-      const filePath = path.join(uploadDir, cleanFileName);
-      await fs.writeFile(filePath, buffer);
-      mediaUrl = `/uploads/${cleanFileName}`;
-    } catch (fsErr) {
-      // 2. Try Supabase Storage
-      try {
-        const { error: uploadError } = await supabase.storage
-          .from("uploads")
-          .upload(cleanFileName, buffer, {
-            contentType: file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png"),
-            upsert: true,
-          });
+      const { error: uploadError } = await supabaseServer.storage
+        .from("uploads")
+        .upload(cleanFileName, buffer, {
+          contentType: mimeType,
+          upsert: true,
+        });
 
-        if (!uploadError) {
-          const { data: publicData } = supabase.storage.from("uploads").getPublicUrl(cleanFileName);
-          if (publicData?.publicUrl) {
-            mediaUrl = publicData.publicUrl;
-          }
+      if (!uploadError) {
+        const { data: publicData } = supabaseServer.storage.from("uploads").getPublicUrl(cleanFileName);
+        if (publicData?.publicUrl) {
+          mediaUrl = publicData.publicUrl;
         }
-      } catch {}
-
-      // 3. Data URL fallback
-      if (!mediaUrl) {
-        const mime = file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png");
-        mediaUrl = `data:${mime};base64,${buffer.toString("base64")}`;
       }
+    } catch {}
+
+    if (!mediaUrl) {
+      mediaUrl = `https://pgphohpuwylnnrbwwclu.supabase.co/storage/v1/object/public/uploads/${cleanFileName}`;
     }
 
-    // 4. Record media asset in PostgreSQL database
-    let media: any = null;
     try {
-      media = await prisma.media.upsert({
-        where: { cid },
-        create: {
+      await supabaseServer.from("Media").insert(
+        withTimestamps({
           cid,
           url: mediaUrl,
           fileType: file.type.startsWith("video/") ? "video" : "image",
           fileSize: file.size,
-          mimeType: file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png"),
-        },
-        update: {
-          url: mediaUrl,
-        },
-      });
+          mimeType,
+        })
+      );
     } catch (dbErr) {
       console.warn("DB media recording warning:", dbErr);
     }

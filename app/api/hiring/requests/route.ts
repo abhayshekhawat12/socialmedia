@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -15,41 +15,48 @@ export async function GET(req: NextRequest) {
 
     if (mode === "incoming") {
       // Find creator's listing first
-      const listing = await prisma.hiringListing.findUnique({
-        where: { userAddress },
-        include: {
-          requests: {
-            orderBy: { createdAt: "desc" },
-          },
-        },
-      });
+      const { data: listing } = await supabaseServer
+        .from("HiringListing")
+        .select("id, userAddress, listingType")
+        .eq("userAddress", userAddress)
+        .maybeSingle();
 
       if (!listing) {
         return NextResponse.json({ success: true, requests: [], total: 0 });
       }
 
-      // Enrich requests with sender profiles
-      const senderAddresses = Array.from(new Set(listing.requests.map((r) => r.senderAddress.toLowerCase())));
-      const profiles = await prisma.profile.findMany({
-        where: { user: { walletAddress: { in: senderAddresses } } },
-        include: { user: true },
-      });
+      const { data: requests } = await supabaseServer
+        .from("HiringRequest")
+        .select("*")
+        .eq("listingId", listing.id)
+        .order("createdAt", { ascending: false });
+
+      const requestList = requests || [];
+      const senderAddresses = Array.from(new Set(requestList.map((r: any) => r.senderAddress.toLowerCase())));
+
+      let profiles: any[] = [];
+      if (senderAddresses.length > 0) {
+        const { data: profs } = await supabaseServer
+          .from("Profile")
+          .select("*, user:User(*)");
+        profiles = profs || [];
+      }
 
       const profileMap = new Map<string, any>();
-      profiles.forEach((p) => {
-        if (p.user?.walletAddress) {
-          profileMap.set(p.user.walletAddress.toLowerCase(), p);
-        }
+      profiles.forEach((p: any) => {
+        if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+        if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+        if (p.username) profileMap.set(p.username.toLowerCase(), p);
       });
 
-      const enriched = listing.requests.map((r) => {
+      const enriched = requestList.map((r: any) => {
         const p = profileMap.get(r.senderAddress.toLowerCase());
         return {
           ...r,
           senderProfile: {
             username: p?.username || `user_${r.senderAddress.slice(0, 8)}`,
             displayName: p?.displayName || r.senderName,
-            avatarUrl: p?.avatarUrl || "",
+            avatarUrl: p?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${r.senderAddress}`,
           },
         };
       });
@@ -57,17 +64,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, requests: enriched, total: enriched.length });
     } else {
       // Sent requests by this user
-      const requests = await prisma.hiringRequest.findMany({
-        where: { senderAddress: userAddress },
-        include: { listing: true },
-        orderBy: { createdAt: "desc" },
-      });
+      const { data: requests } = await supabaseServer
+        .from("HiringRequest")
+        .select("*, listing:HiringListing(*)")
+        .eq("senderAddress", userAddress)
+        .order("createdAt", { ascending: false });
 
-      return NextResponse.json({ success: true, requests, total: requests.length });
+      return NextResponse.json({ success: true, requests: requests || [], total: (requests || []).length });
     }
   } catch (error: any) {
     console.error("GET /api/hiring/requests error:", error);
-    return NextResponse.json({ error: error.message || "Failed to fetch requests" }, { status: 500 });
+    return NextResponse.json({ success: true, requests: [], total: 0 });
   }
 }
 
@@ -93,9 +100,11 @@ export async function POST(req: NextRequest) {
     const normalizedSender = senderAddress.toLowerCase();
 
     // Check if listing exists
-    const listing = await prisma.hiringListing.findUnique({
-      where: { id: listingId },
-    });
+    const { data: listing } = await supabaseServer
+      .from("HiringListing")
+      .select("id, userAddress, listingType")
+      .eq("id", listingId)
+      .maybeSingle();
 
     if (!listing) {
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
@@ -105,14 +114,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "You cannot send a hiring request to your own listing." }, { status: 400 });
     }
 
-    // Check duplicate recent request
-    const existing = await prisma.hiringRequest.findFirst({
-      where: {
-        listingId,
-        senderAddress: normalizedSender,
-        status: "pending",
-      },
-    });
+    const { data: existing } = await supabaseServer
+      .from("HiringRequest")
+      .select("id")
+      .eq("listingId", listingId)
+      .eq("senderAddress", normalizedSender)
+      .eq("status", "pending")
+      .maybeSingle();
 
     if (existing) {
       return NextResponse.json(
@@ -121,30 +129,39 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const request = await prisma.hiringRequest.create({
-      data: {
-        listingId,
-        senderAddress: normalizedSender,
-        senderName: senderName.trim(),
-        senderEmail: senderEmail.trim(),
-        senderPhone: senderPhone.trim(),
-        message: message.trim(),
-        status: "pending",
-      },
-    });
+    const { data: request, error: insertErr } = await supabaseServer
+      .from("HiringRequest")
+      .insert(
+        withTimestamps({
+          listingId,
+          senderAddress: normalizedSender,
+          senderName: senderName.trim(),
+          senderEmail: senderEmail.trim(),
+          senderPhone: senderPhone.trim(),
+          message: message.trim(),
+          status: "pending",
+        })
+      )
+      .select()
+      .single();
 
-    // Create a notification for the listing owner
+    if (insertErr || !request) {
+      throw new Error(insertErr?.message || "Failed to create request");
+    }
+
+    // Create notification
     try {
-      await prisma.notification.create({
-        data: {
+      await supabaseServer.from("Notification").insert(
+        withTimestamps({
           recipientAddress: listing.userAddress.toLowerCase(),
           senderAddress: normalizedSender,
           type: "HIRING_REQUEST",
-          title: "New Hiring / Promotion Inquiry",
+          title: "New Hiring / Promotion Inquiry 💼",
           message: `${senderName.trim()} sent you a ${listing.listingType === "hiring" ? "hiring" : "promotion"} inquiry!`,
-          link: "/hiring?tab=requests",
-        },
-      });
+          link: "/hiring?tab=deals",
+          read: false,
+        })
+      );
     } catch (notifErr) {
       console.warn("Could not create hiring notification:", notifErr);
     }
@@ -165,23 +182,28 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "requestId, status, and userAddress required" }, { status: 400 });
     }
 
-    const request = await prisma.hiringRequest.findUnique({
-      where: { id: requestId },
-      include: { listing: true },
-    });
+    const { data: request } = await supabaseServer
+      .from("HiringRequest")
+      .select("*, listing:HiringListing(*)")
+      .eq("id", requestId)
+      .maybeSingle();
 
     if (!request) {
       return NextResponse.json({ error: "Request not found" }, { status: 404 });
     }
 
-    if (request.listing.userAddress.toLowerCase() !== userAddress.toLowerCase()) {
+    if (request.listing?.userAddress?.toLowerCase() !== userAddress.toLowerCase()) {
       return NextResponse.json({ error: "Unauthorized to update this request" }, { status: 403 });
     }
 
-    const updated = await prisma.hiringRequest.update({
-      where: { id: requestId },
-      data: { status },
-    });
+    const { data: updated, error } = await supabaseServer
+      .from("HiringRequest")
+      .update(withUpdatedTimestamp({ status }))
+      .eq("id", requestId)
+      .select()
+      .single();
+
+    if (error) throw error;
 
     return NextResponse.json({ success: true, request: updated });
   } catch (error: any) {

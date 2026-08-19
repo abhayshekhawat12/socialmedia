@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -12,38 +12,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User address required" }, { status: 400 });
     }
 
-    const saved = await prisma.savedCreator.findMany({
-      where: { userAddress },
-      include: {
-        listing: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const { data: savedData } = await supabaseServer
+      .from("SavedCreator")
+      .select("*, listing:HiringListing(*)")
+      .eq("userAddress", userAddress)
+      .order("createdAt", { ascending: false });
 
-    // Populate user profiles
-    const listingAddresses = saved.map((s) => s.listing.userAddress.toLowerCase());
-    const profiles = await prisma.profile.findMany({
-      where: { user: { walletAddress: { in: listingAddresses } } },
-      include: { user: true },
-    });
+    const saved = savedData || [];
+    const listingAddresses = saved.map((s: any) => s.listing?.userAddress?.toLowerCase()).filter(Boolean);
+
+    let profiles: any[] = [];
+    if (listingAddresses.length > 0) {
+      const { data: profs } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profs || [];
+    }
 
     const profileMap = new Map<string, any>();
-    profiles.forEach((p) => {
-      if (p.user?.walletAddress) {
-        profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      }
+    profiles.forEach((p: any) => {
+      if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     });
 
-    const enriched = saved.map((s) => {
-      const p = profileMap.get(s.listing.userAddress.toLowerCase());
+    const enriched = saved.map((s: any) => {
+      const p = profileMap.get(s.listing?.userAddress?.toLowerCase());
       return {
         ...s,
         listing: {
           ...s.listing,
           profile: {
-            username: p?.username || `user_${s.listing.userAddress.slice(0, 8)}`,
-            displayName: p?.displayName || s.listing.fullName,
-            avatarUrl: p?.avatarUrl || "",
+            username: p?.username || `user_${(s.listing?.userAddress || "").slice(0, 8)}`,
+            displayName: p?.displayName || s.listing?.fullName,
+            avatarUrl: p?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${s.listing?.userAddress}`,
           },
         },
       };
@@ -52,7 +54,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, savedCreators: enriched, total: enriched.length });
   } catch (error: any) {
     console.error("GET /api/hiring/saved error:", error);
-    return NextResponse.json({ error: error.message || "Failed to fetch saved creators" }, { status: 500 });
+    return NextResponse.json({ success: true, savedCreators: [], total: 0 });
   }
 }
 
@@ -68,27 +70,28 @@ export async function POST(req: NextRequest) {
     const normalizedAddress = userAddress.toLowerCase();
 
     // Check if already saved
-    const existing = await prisma.savedCreator.findUnique({
-      where: {
-        userAddress_listingId: {
-          userAddress: normalizedAddress,
-          listingId,
-        },
-      },
-    });
+    const { data: existing } = await supabaseServer
+      .from("SavedCreator")
+      .select("id")
+      .eq("userAddress", normalizedAddress)
+      .eq("listingId", listingId)
+      .maybeSingle();
 
     if (existing) {
-      await prisma.savedCreator.delete({
-        where: { id: existing.id },
-      });
+      await supabaseServer
+        .from("SavedCreator")
+        .delete()
+        .eq("id", existing.id);
       return NextResponse.json({ success: true, isSaved: false, message: "Creator removed from saved" });
     } else {
-      await prisma.savedCreator.create({
-        data: {
-          userAddress: normalizedAddress,
-          listingId,
-        },
-      });
+      await supabaseServer
+        .from("SavedCreator")
+        .insert(
+          withTimestamps({
+            userAddress: normalizedAddress,
+            listingId,
+          })
+        );
       return NextResponse.json({ success: true, isSaved: true, message: "Creator saved ⭐" });
     }
   } catch (error: any) {

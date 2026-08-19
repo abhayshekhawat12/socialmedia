@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withUpdatedTimestamp } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -8,32 +8,29 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await prisma.deal.findUnique({
-      where: { id: params.id },
-      include: {
-        reviews: true,
-      },
-    });
+    const { data: deal, error } = await supabaseServer
+      .from("Deal")
+      .select("*")
+      .eq("id", params.id)
+      .maybeSingle();
 
-    if (!deal) {
+    if (error || !deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
-    const profiles = await prisma.profile.findMany({
-      where: {
-        user: {
-          walletAddress: { in: [deal.creatorAddress.toLowerCase(), deal.clientAddress.toLowerCase()] },
-        },
-      },
-      include: { user: true },
+    const { data: profiles } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .or(`userId.eq.${deal.creatorAddress},userId.eq.${deal.clientAddress}`);
+
+    const profileList = profiles || [];
+    const profileMap = new Map<string, any>();
+    profileList.forEach((p: any) => {
+      if (p.user?.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     });
 
-    const profileMap = new Map<string, any>();
-    profiles.forEach((p) => {
-      if (p.user?.walletAddress) {
-        profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      }
-    });
     const creatorProf = profileMap.get(deal.creatorAddress.toLowerCase());
     const clientProf = profileMap.get(deal.clientAddress.toLowerCase());
 
@@ -45,13 +42,13 @@ export async function GET(
           walletAddress: deal.creatorAddress,
           displayName: creatorProf?.displayName || `Creator ${deal.creatorAddress.slice(0, 6)}`,
           username: creatorProf?.username || `user_${deal.creatorAddress.slice(0, 8)}`,
-          avatarUrl: creatorProf?.avatarUrl || "",
+          avatarUrl: creatorProf?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${deal.creatorAddress}`,
         },
         client: {
           walletAddress: deal.clientAddress,
           displayName: clientProf?.displayName || `Client ${deal.clientAddress.slice(0, 6)}`,
           username: clientProf?.username || `user_${deal.clientAddress.slice(0, 8)}`,
-          avatarUrl: clientProf?.avatarUrl || "",
+          avatarUrl: clientProf?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${deal.clientAddress}`,
         },
       },
     });
@@ -68,7 +65,7 @@ export async function PATCH(
     const body = await req.json();
     const {
       userAddress,
-      action, // accept_offer | reject_offer | counter_offer | submit_content | complete_deal | cancel
+      action,
       counterPrice,
       counterDeliverables,
       counterDeadline,
@@ -81,9 +78,11 @@ export async function PATCH(
     }
 
     const normalizedUser = userAddress.toLowerCase();
-    const deal = await prisma.deal.findUnique({
-      where: { id: params.id },
-    });
+    const { data: deal } = await supabaseServer
+      .from("Deal")
+      .select("*")
+      .eq("id", params.id)
+      .maybeSingle();
 
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
@@ -96,7 +95,6 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized access to this deal" }, { status: 403 });
     }
 
-    // Parse existing timeline log
     let timeline: any[] = [];
     try {
       timeline = JSON.parse(deal.timelineUpdates || "[]");
@@ -166,10 +164,14 @@ export async function PATCH(
 
     updateData.timelineUpdates = JSON.stringify(timeline);
 
-    const updatedDeal = await prisma.deal.update({
-      where: { id: params.id },
-      data: updateData,
-    });
+    const { data: updatedDeal, error: updateErr } = await supabaseServer
+      .from("Deal")
+      .update(withUpdatedTimestamp(updateData))
+      .eq("id", params.id)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
 
     return NextResponse.json({ success: true, deal: updatedDeal });
   } catch (error: any) {
