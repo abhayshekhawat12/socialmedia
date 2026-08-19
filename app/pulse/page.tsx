@@ -62,7 +62,7 @@ interface PulseItem {
 
 export default function PulsePage() {
   const router = useRouter();
-  const { account } = useAuth();
+  const { account, user } = useAuth();
   const { settings } = useSettings();
 
   const [activeTab, setActiveTab] = useState<'trending' | 'for_you' | 'following'>('trending');
@@ -392,6 +392,13 @@ export default function PulsePage() {
       return;
     }
 
+    const userAuthor = user?.walletAddress || user?.id || account;
+    if (!userAuthor) {
+      setUploadError("Please sign in to upload content.");
+      window.location.href = "/login";
+      return;
+    }
+
     try {
       setIsPublishing(true);
       setUploadError(null);
@@ -399,17 +406,18 @@ export default function PulsePage() {
 
       const formData = new FormData();
       formData.append('file', selectedVideoFile);
+      formData.append('folder', 'reels');
 
       const uploadRes = await fetch('/api/storage/upload', {
         method: 'POST',
         body: formData,
       });
 
-      if (!uploadRes.ok) throw new Error('Video storage upload failed');
       const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.url) {
+        throw new Error(uploadData.error || 'Video storage upload failed');
+      }
       const videoUrl = uploadData.url;
-
-      const userAuthor = account || '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
 
       const pulseRes = await fetch('/api/pulse', {
         method: 'POST',
@@ -426,7 +434,8 @@ export default function PulsePage() {
         }),
       });
 
-      if (!pulseRes.ok) throw new Error('Failed to save reel record');
+      const pulseData = await pulseRes.json();
+      if (!pulseRes.ok) throw new Error(pulseData.error || 'Failed to save reel record in database');
 
       setIsCreateOpen(false);
       setSelectedVideoFile(null);
@@ -435,7 +444,7 @@ export default function PulsePage() {
       setSelectedTrack(null);
       fetchPulses();
     } catch (err: any) {
-      console.error(err);
+      console.error("[Pulse Publish Error]:", err);
       setUploadError(err.message || 'Publishing failed. Please try again.');
     } finally {
       setIsPublishing(false);

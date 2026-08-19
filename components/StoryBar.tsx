@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, X, Image as ImageIcon, Sparkles, Loader2, Music, Sliders, Type } from 'lucide-react';
+import { Plus, X, Image as ImageIcon, Sparkles, Loader2, Music, Sliders, Type, AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 import { StoryViewerModal } from './StoryViewerModal';
 import { MusicPickerModal, SelectedTrack } from './MusicPickerModal';
@@ -9,6 +9,11 @@ import { GlassModal } from './ui/GlassModal';
 import { audioHaptics } from '../lib/audioHaptics';
 import { compressImage } from '../lib/imageCompression';
 import { appCache } from '../lib/cache';
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime", "video/mov"];
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
 
 interface Story {
   id: string;
@@ -31,7 +36,7 @@ interface StoryGroup {
 }
 
 export const StoryBar: React.FC = () => {
-  const { account, profile } = useAuth();
+  const { account, user } = useAuth();
   const [groups, setGroups] = useState<StoryGroup[]>(() => {
     return appCache.get<StoryGroup[]>("stories_groups") || [];
   });
@@ -62,22 +67,15 @@ export const StoryBar: React.FC = () => {
 
   const fetchStories = async () => {
     try {
-      const freshGroups = await appCache.getOrFetch<StoryGroup[]>(
-        "stories_groups",
-        async () => {
-          const res = await fetch('/api/stories');
-          if (res.ok) {
-            const data = await res.json();
-            return data.groups || [];
-          }
-          return [];
-        },
-        30,
-        (updated) => setGroups(updated)
-      );
-      setGroups(freshGroups);
+      const res = await fetch('/api/stories');
+      if (res.ok) {
+        const data = await res.json();
+        const fresh = data.groups || [];
+        setGroups(fresh);
+        appCache.set("stories_groups", fresh, 20);
+      }
     } catch (e) {
-      console.error(e);
+      console.error("Fetch stories error:", e);
     }
   };
 
@@ -98,6 +96,25 @@ export const StoryBar: React.FC = () => {
     setUploadError(null);
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      const mime = file.type?.toLowerCase() || "";
+      const isImg = ALLOWED_IMAGE_TYPES.includes(mime) || mime.startsWith("image/");
+      const isVid = ALLOWED_VIDEO_TYPES.includes(mime) || mime.startsWith("video/");
+
+      if (!isImg && !isVid) {
+        setUploadError("This file type isn't supported. Please upload a JPG, PNG, or MP4 file.");
+        return;
+      }
+
+      if (isImg && file.size > MAX_IMAGE_SIZE) {
+        setUploadError("This image is too large (maximum size is 15MB).");
+        return;
+      }
+
+      if (isVid && file.size > MAX_VIDEO_SIZE) {
+        setUploadError("This video is too large (maximum size is 50MB).");
+        return;
+      }
+
       setMediaFile(file);
       const url = URL.createObjectURL(file);
       setMediaPreview(url);
@@ -109,6 +126,13 @@ export const StoryBar: React.FC = () => {
   const handlePublishStory = async (e: React.FormEvent) => {
     e.preventDefault();
     setUploadError(null);
+
+    const currentAuthor = user?.walletAddress || user?.id || account;
+    if (!currentAuthor) {
+      setUploadError("Please sign in to upload content.");
+      window.location.href = "/login";
+      return;
+    }
 
     if (storyType === 'text' && !textContent.trim()) {
       setUploadError("Please type a story message.");
@@ -123,7 +147,7 @@ export const StoryBar: React.FC = () => {
       setIsUploading(true);
       audioHaptics.playSend();
       let mediaUrl = "";
-      let actualMediaType = storyType === 'text' ? 'text' : (mediaFile?.type.startsWith('video/') ? 'video' : 'image');
+      const actualMediaType = storyType === 'text' ? 'text' : (mediaFile?.type.startsWith('video/') ? 'video' : 'image');
 
       if (storyType === 'media' && mediaFile) {
         const fileToUpload = mediaFile.type.startsWith("image/") 
@@ -132,18 +156,18 @@ export const StoryBar: React.FC = () => {
 
         const formData = new FormData();
         formData.append("file", fileToUpload);
+        formData.append("folder", "stories");
         
         const uploadRes = await fetch("/api/storage/upload", {
           method: "POST",
           body: formData,
         });
 
-        if (!uploadRes.ok) {
-          const errData = await uploadRes.json();
-          throw new Error(errData.error || "Failed to upload story media.");
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok || !uploadData.url) {
+          throw new Error(uploadData.error || "Failed to upload story media to cloud storage.");
         }
 
-        const uploadData = await uploadRes.json();
         mediaUrl = uploadData.url;
       }
 
@@ -151,7 +175,7 @@ export const StoryBar: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          authorAddress: account || 'usr_guest_creator',
+          authorAddress: currentAuthor,
           mediaUrl,
           mediaType: actualMediaType,
           textContent: storyType === 'text' ? textContent : '',
@@ -162,21 +186,21 @@ export const StoryBar: React.FC = () => {
         }),
       });
 
-      if (res.ok) {
-        appCache.invalidate("stories_");
-        await fetchStories();
-        setIsCreateOpen(false);
-        setTextContent("");
-        setMediaFile(null);
-        setMediaPreview(null);
-        setSelectedTrack(null);
-      } else {
-        const errData = await res.json();
-        throw new Error(errData.error || "Failed to publish story.");
+      const storyResData = await res.json();
+      if (!res.ok) {
+        throw new Error(storyResData.error || "Failed to save story in database.");
       }
+
+      appCache.invalidate("stories_");
+      await fetchStories();
+      setIsCreateOpen(false);
+      setTextContent("");
+      setMediaFile(null);
+      setMediaPreview(null);
+      setSelectedTrack(null);
     } catch (e: any) {
-      console.error(e);
-      setUploadError(e.message || "Failed to publish story.");
+      console.error("[Story Publish Error]:", e);
+      setUploadError(e.message || "Failed to publish story. Please try again.");
     } finally {
       setIsUploading(false);
     }
@@ -213,7 +237,7 @@ export const StoryBar: React.FC = () => {
             >
               <img 
                 src={
-                  profile?.avatarUrl ||
+                  user?.profile?.avatarUrl ||
                   (account
                     ? `https://api.dicebear.com/7.x/bottts/svg?seed=${account}`
                     : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120")
@@ -293,8 +317,9 @@ export const StoryBar: React.FC = () => {
       >
         <div className="space-y-4 text-xs">
           {uploadError && (
-            <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-bold">
-              {uploadError}
+            <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-bold flex items-center gap-2 text-left">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{uploadError}</span>
             </div>
           )}
 

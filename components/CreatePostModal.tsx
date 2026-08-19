@@ -14,13 +14,18 @@ import {
   ChevronLeft, 
   Type,
   Volume2,
-  Check
+  AlertCircle
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { MusicPickerModal, SelectedTrack } from "./MusicPickerModal";
 import { audioHaptics } from "../lib/audioHaptics";
 import { compressImage } from "../lib/imageCompression";
 import { appCache } from "../lib/cache";
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime", "video/mov"];
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_VIDEO_SIZE = 60 * 1024 * 1024; // 60MB
 
 export function CreatePostModal() {
   const router = useRouter();
@@ -34,6 +39,7 @@ export function CreatePostModal() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<"image" | "video">("image");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   // Music Picker State
   const [isMusicPickerOpen, setIsMusicPickerOpen] = useState(false);
@@ -70,15 +76,34 @@ export function CreatePostModal() {
   const [statusMessage, setStatusMessage] = useState("");
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selected = e.target.files[0];
-      setFile(selected);
-      const isVideo = selected.type.startsWith("video/");
-      setMediaType(isVideo ? "video" : "image");
-      setPreviewUrl(URL.createObjectURL(selected));
-      setCreationStep("enhance");
-      audioHaptics.playTap();
+    setValidationError(null);
+    if (!e.target.files || !e.target.files[0]) return;
+
+    const selected = e.target.files[0];
+    const mime = selected.type?.toLowerCase() || "";
+    const isImg = ALLOWED_IMAGE_TYPES.includes(mime) || mime.startsWith("image/");
+    const isVid = ALLOWED_VIDEO_TYPES.includes(mime) || mime.startsWith("video/");
+
+    if (!isImg && !isVid) {
+      setValidationError("This file type isn't supported. Please choose a JPG, PNG, WEBP photo or MP4 video.");
+      return;
     }
+
+    if (isImg && selected.size > MAX_IMAGE_SIZE) {
+      setValidationError("This image is too large (maximum size is 15MB).");
+      return;
+    }
+
+    if (isVid && selected.size > MAX_VIDEO_SIZE) {
+      setValidationError("This video is too large (maximum size is 60MB).");
+      return;
+    }
+
+    setFile(selected);
+    setMediaType(isVid ? "video" : "image");
+    setPreviewUrl(URL.createObjectURL(selected));
+    setCreationStep("enhance");
+    audioHaptics.playTap();
   };
 
   const handleFinalPublish = async (e: React.FormEvent) => {
@@ -87,6 +112,7 @@ export function CreatePostModal() {
 
     const currentAuthor = user?.walletAddress || user?.id || account;
     if (!currentAuthor) {
+      setStatusMessage("Please sign in to upload content.");
       router.push("/login");
       return;
     }
@@ -94,7 +120,7 @@ export function CreatePostModal() {
     try {
       setIsUploading(true);
       audioHaptics.playSend();
-      setStatusMessage("Optimizing & uploading media...");
+      setStatusMessage("Uploading media to cloud storage...");
 
       const fileToUpload = file.type.startsWith("image/")
         ? await compressImage(file, { maxWidth: 1600, quality: 0.85 })
@@ -102,18 +128,22 @@ export function CreatePostModal() {
 
       const formData = new FormData();
       formData.append("file", fileToUpload);
+      formData.append("folder", mediaType === "video" ? "reels" : "posts");
 
       const uploadRes = await fetch("/api/storage/upload", {
         method: "POST",
         body: formData,
       });
 
-      if (!uploadRes.ok) throw new Error("Media upload failed");
       const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.url) {
+        throw new Error(uploadData.error || "Media upload failed. Please check network and try again.");
+      }
+
       const mediaUrl = uploadData.url;
       const mediaCid = uploadData.cid || "";
 
-      setStatusMessage("Saving to database...");
+      setStatusMessage("Publishing to feed...");
 
       if (mediaType === "video") {
         const pulseRes = await fetch("/api/pulse", {
@@ -133,7 +163,11 @@ export function CreatePostModal() {
           }),
         });
 
-        if (!pulseRes.ok) throw new Error("Failed to save short video to database.");
+        const pulseData = await pulseRes.json();
+        if (!pulseRes.ok) {
+          throw new Error(pulseData.error || "Failed to save short video to database.");
+        }
+
         appCache.clear();
         router.push("/pulse");
       } else {
@@ -151,15 +185,19 @@ export function CreatePostModal() {
           }),
         });
 
-        if (!postRes.ok) throw new Error("Failed to save post to database.");
+        const postData = await postRes.json();
+        if (!postRes.ok) {
+          throw new Error(postData.error || "Failed to save post to database.");
+        }
+
         appCache.clear();
-        router.push("/feed");
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("pulse_post_created"));
         }
+        router.push("/feed");
       }
     } catch (err: any) {
-      console.error(err);
+      console.error("[Publish Error]:", err);
       setStatusMessage(err.message || "Failed to publish. Please try again.");
       setIsUploading(false);
     }
@@ -213,6 +251,13 @@ export function CreatePostModal() {
       {/* STEP 1: UPLOAD MEDIA */}
       {creationStep === "upload" && (
         <div className="p-8 rounded-[32px] glass-card border border-white/80 dark:border-white/10 text-center space-y-5">
+          {validationError && (
+            <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-bold flex items-center gap-2 text-left">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
           <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#00B7FF] rounded-[28px] p-10 block cursor-pointer transition-colors glass-panel group btn-tactile">
             <UploadCloud className="w-14 h-14 text-[#00B7FF] mx-auto mb-3 group-hover:scale-110 transition-transform" />
             <h3 className="font-black text-sm text-slate-900 dark:text-white">

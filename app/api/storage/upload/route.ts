@@ -5,72 +5,102 @@ import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
+// Allowed MIME types
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime", "video/mov"];
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_VIDEO_SIZE = 60 * 1024 * 1024; // 60MB
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const file = formData.get("file") as File;
+    const file = formData.get("file") as File | null;
+    const folder = (formData.get("folder") as string) || "posts";
 
     if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+      return NextResponse.json({ error: "No file provided. Please select a file to upload." }, { status: 400 });
+    }
+
+    const mimeType = file.type?.toLowerCase() || "";
+    const isImage = ALLOWED_IMAGE_TYPES.includes(mimeType) || mimeType.startsWith("image/");
+    const isVideo = ALLOWED_VIDEO_TYPES.includes(mimeType) || mimeType.startsWith("video/");
+
+    if (!isImage && !isVideo) {
+      return NextResponse.json(
+        { error: "This file type isn't supported. Please upload a JPG, PNG, WEBP image or MP4, MOV video." },
+        { status: 400 }
+      );
+    }
+
+    // Size check
+    if (isImage && file.size > MAX_IMAGE_SIZE) {
+      return NextResponse.json({ error: "This image is too large (maximum size is 15MB)." }, { status: 400 });
+    }
+    if (isVideo && file.size > MAX_VIDEO_SIZE) {
+      return NextResponse.json({ error: "This video is too large (maximum size is 60MB)." }, { status: 400 });
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const fileExtension = path.extname(file.name) || (file.type.startsWith("video/") ? ".mp4" : ".png");
-    const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 12)}${fileExtension}`;
+    let ext = path.extname(file.name)?.toLowerCase();
+    if (!ext) {
+      ext = isVideo ? ".mp4" : ".jpg";
+    }
+
+    const randomSuffix = crypto.randomBytes(8).toString("hex");
+    const uniqueFileName = `${folder}/${Date.now()}_${randomSuffix}${ext}`;
     const mockCid = `qm_${crypto.createHash("md5").update(buffer).digest("hex")}`;
 
-    let mediaUrl = "";
+    // 1. Upload to Supabase Storage bucket 'uploads'
+    const { data: uploadData, error: uploadError } = await supabaseServer.storage
+      .from("uploads")
+      .upload(uniqueFileName, buffer, {
+        contentType: mimeType || (isVideo ? "video/mp4" : "image/jpeg"),
+        upsert: true,
+      });
 
-    // 1. Try Supabase Storage bucket 'uploads'
-    try {
-      const { error: uploadError } = await supabaseServer.storage
-        .from("uploads")
-        .upload(fileName, buffer, {
-          contentType: file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png"),
-          upsert: true,
-        });
-
-      if (!uploadError) {
-        const { data: publicData } = supabaseServer.storage.from("uploads").getPublicUrl(fileName);
-        if (publicData?.publicUrl) {
-          mediaUrl = publicData.publicUrl;
-        }
-      }
-    } catch (storageErr) {
-      console.warn("Supabase Storage bucket notice:", storageErr);
+    if (uploadError || !uploadData) {
+      console.error("Supabase Storage upload error:", uploadError);
+      throw new Error(`Storage upload failed: ${uploadError?.message || "Could not store file in cloud storage"}`);
     }
 
-    // 2. Base64 Data URL fallback for guaranteed display
+    // 2. Get Public URL
+    const { data: publicData } = supabaseServer.storage.from("uploads").getPublicUrl(uniqueFileName);
+    const mediaUrl = publicData.publicUrl;
+
     if (!mediaUrl) {
-      const mime = file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png");
-      mediaUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+      throw new Error("Failed to generate public URL for uploaded media.");
     }
 
-    // 3. Save media record to Supabase table
+    // 3. Save media record in database
     try {
       await supabaseServer.from("Media").upsert(
         withTimestamps({
           cid: mockCid,
           url: mediaUrl,
-          fileType: file.type.startsWith("video/") ? "video" : "image",
+          fileType: isVideo ? "video" : "image",
           fileSize: file.size,
-          mimeType: file.type || "image/png",
+          mimeType: mimeType || (isVideo ? "video/mp4" : "image/jpeg"),
         })
       );
     } catch (dbErr) {
-      console.warn("Media record notice:", dbErr);
+      console.warn("Media record DB notice:", dbErr);
     }
 
     return NextResponse.json({
       success: true,
       url: mediaUrl,
       cid: mockCid,
+      storagePath: uniqueFileName,
       fileName: file.name,
+      fileType: isVideo ? "video" : "image",
     });
   } catch (error: any) {
-    console.error("Storage upload error:", error);
-    return NextResponse.json({ error: error.message || "Failed to upload file" }, { status: 500 });
+    console.error("Upload API route error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to process and upload media." },
+      { status: 500 }
+    );
   }
 }
