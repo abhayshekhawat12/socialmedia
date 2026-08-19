@@ -5,6 +5,7 @@ import { Plus, X, Image as ImageIcon, Sparkles, Loader2, Music, Sliders, Type } 
 import { useAuth } from '../lib/authContext';
 import { StoryViewerModal } from './StoryViewerModal';
 import { MusicPickerModal, SelectedTrack } from './MusicPickerModal';
+import { GlassModal } from './ui/GlassModal';
 import { audioHaptics } from '../lib/audioHaptics';
 import { compressImage } from '../lib/imageCompression';
 import { appCache } from '../lib/cache';
@@ -30,7 +31,7 @@ interface StoryGroup {
 }
 
 export const StoryBar: React.FC = () => {
-  const { account } = useAuth();
+  const { account, profile } = useAuth();
   const [groups, setGroups] = useState<StoryGroup[]>(() => {
     return appCache.get<StoryGroup[]>("stories_groups") || [];
   });
@@ -40,7 +41,7 @@ export const StoryBar: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [storyType, setStoryType] = useState<'text' | 'media'>('media');
   const [textContent, setTextContent] = useState("");
-  const [textBgColor, setTextBgColor] = useState("#4f46e5");
+  const [textBgColor, setTextBgColor] = useState("#00B7FF");
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -52,7 +53,7 @@ export const StoryBar: React.FC = () => {
   const [selectedFilter, setSelectedFilter] = useState("");
 
   const filters = [
-    { name: "None", class: "" },
+    { name: "Normal", class: "" },
     { name: "Cinematic", class: "brightness-[1.1] saturate-[1.15] contrast-[1.1]" },
     { name: "Sunset", class: "sepia-[0.25] saturate-[1.3] brightness-[1.05]" },
     { name: "Vintage", class: "sepia-[0.35] brightness-[0.95]" },
@@ -125,7 +126,6 @@ export const StoryBar: React.FC = () => {
       let actualMediaType = storyType === 'text' ? 'text' : (mediaFile?.type.startsWith('video/') ? 'video' : 'image');
 
       if (storyType === 'media' && mediaFile) {
-        // Compress image if photo
         const fileToUpload = mediaFile.type.startsWith("image/") 
           ? await compressImage(mediaFile, { maxWidth: 1400, quality: 0.85 })
           : mediaFile;
@@ -185,8 +185,7 @@ export const StoryBar: React.FC = () => {
   const ownGroup = groups.find(g => g.authorAddress.toLowerCase() === account?.toLowerCase());
 
   return (
-    <div className="w-full flex items-center justify-start gap-4 overflow-x-auto no-scrollbar py-2 px-1 text-left select-none">
-      
+    <div className="w-full pb-2 mb-3 select-none">
       {/* Music Picker Bottom Sheet */}
       <MusicPickerModal
         isOpen={isMusicPickerOpen}
@@ -195,74 +194,80 @@ export const StoryBar: React.FC = () => {
         selectedTrackId={selectedTrack?.id}
       />
 
-      {/* Current User Story Item */}
-      <div className="flex flex-col items-center gap-1 shrink-0">
-        <div className="relative">
-          <div 
-            onClick={() => {
-              if (ownGroup) {
-                const idx = groups.findIndex(g => g.authorAddress.toLowerCase() === account?.toLowerCase());
-                setViewerGroupIndex(idx);
-              } else {
-                setIsCreateOpen(true);
-              }
-            }}
-            className={`w-14 h-14 rounded-full p-[2.5px] cursor-pointer hover:scale-105 transition-transform duration-250 ${
-              ownGroup 
-                ? 'bg-gradient-to-tr from-[#00B7FF] via-[#36C4FF] to-indigo-500' 
-                : 'border-2 border-slate-200 dark:border-slate-800'
-            }`}
-          >
-            <div className="w-full h-full rounded-full border border-white dark:border-[#131b2e] overflow-hidden bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-400">
+      {/* Horizontal Stories Carousel */}
+      <div className="flex items-center gap-3.5 overflow-x-auto hide-scrollbar py-2 px-1">
+        
+        {/* 1. Current User Story Item */}
+        <div className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group">
+          <div className="w-[68px] h-[68px] rounded-full relative p-[2.5px] bg-gradient-to-tr from-[#00B7FF] via-[#7EDBE8] to-[#F45AA8] shadow-sm group-hover:scale-105 transition-transform duration-200">
+            <div 
+              onClick={() => {
+                if (ownGroup) {
+                  const idx = groups.findIndex(g => g.authorAddress.toLowerCase() === account?.toLowerCase());
+                  setViewerGroupIndex(idx);
+                } else {
+                  setIsCreateOpen(true);
+                }
+              }}
+              className="w-full h-full rounded-full overflow-hidden border-2 border-white dark:border-[#131b2e] bg-slate-100 dark:bg-slate-900"
+            >
               <img 
-                src={`https://api.dicebear.com/7.x/bottts/svg?seed=${account || "me"}`} 
+                src={
+                  profile?.avatarUrl ||
+                  (account
+                    ? `https://api.dicebear.com/7.x/bottts/svg?seed=${account}`
+                    : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120")
+                } 
                 alt="Your Avatar" 
-                className="w-full h-full object-cover bg-slate-900" 
+                className="w-full h-full object-cover" 
               />
             </div>
-          </div>
 
-          <button
-            onClick={() => {
-              audioHaptics.playTap();
-              setIsCreateOpen(true);
-            }}
-            className="absolute bottom-0 right-0 w-4.5 h-4.5 rounded-full bg-[#00B7FF] text-slate-950 flex items-center justify-center border-2 border-white dark:border-[#131b2e] shadow-sm hover:scale-110 transition-transform cursor-pointer"
-            title="Create Story"
-          >
-            <Plus className="w-3 h-3 stroke-[3]" />
-          </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                audioHaptics.playTap();
+                setIsCreateOpen(true);
+              }}
+              className="absolute bottom-0 right-0 bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 rounded-full w-5 h-5 flex items-center justify-center border-2 border-white dark:border-[#181c1e] shadow-md hover:scale-110 transition-transform font-bold cursor-pointer"
+              title="Add Story"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            </button>
+          </div>
+          <span className="text-[11px] font-black text-slate-800 dark:text-slate-200 truncate w-16 text-center">
+            Your Story
+          </span>
         </div>
-        <span className="text-[10px] font-bold text-slate-400 w-14 truncate text-center">Your Story</span>
-      </div>
 
-      {/* Other Users' Stories */}
-      {groups.map((group, idx) => {
-        if (group.authorAddress.toLowerCase() === account?.toLowerCase()) return null;
-        return (
-          <div 
-            key={group.authorAddress} 
-            onClick={() => {
-              audioHaptics.playTap();
-              setViewerGroupIndex(idx);
-            }}
-            className="flex flex-col items-center gap-1 shrink-0 cursor-pointer group"
-          >
-            <div className="w-14 h-14 rounded-full p-[2.5px] bg-gradient-to-tr from-[#00B7FF] via-purple-500 to-indigo-500 group-hover:scale-105 transition-transform duration-250">
-              <div className="w-full h-full rounded-full border border-white dark:border-[#131b2e] overflow-hidden bg-slate-100 dark:bg-slate-900">
-                <img 
-                  src={group.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${group.authorAddress}`} 
-                  alt={group.displayName} 
-                  className="w-full h-full object-cover bg-slate-900" 
-                />
+        {/* 2. Other Users' Stories */}
+        {groups.map((group, idx) => {
+          if (group.authorAddress.toLowerCase() === account?.toLowerCase()) return null;
+          return (
+            <div 
+              key={group.authorAddress} 
+              onClick={() => {
+                audioHaptics.playTap();
+                setViewerGroupIndex(idx);
+              }}
+              className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group"
+            >
+              <div className="w-[68px] h-[68px] rounded-full p-[2.5px] bg-gradient-to-tr from-[#00B7FF] via-[#9B6CFF] to-[#F45AA8] shadow-sm group-hover:scale-105 transition-transform duration-200">
+                <div className="w-full h-full rounded-full border-2 border-white dark:border-[#131b2e] overflow-hidden bg-slate-100 dark:bg-slate-900">
+                  <img 
+                    src={group.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${group.authorAddress}`} 
+                    alt={group.displayName} 
+                    className="w-full h-full object-cover" 
+                  />
+                </div>
               </div>
+              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 truncate w-16 text-center">
+                {group.username || group.displayName.split(' ')[0]}
+              </span>
             </div>
-            <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 w-14 truncate text-center">
-              {group.displayName.split(' ')[0]}
-            </span>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
       {/* STORY VIEWER MODAL */}
       {viewerGroupIndex !== null && (
@@ -275,172 +280,165 @@ export const StoryBar: React.FC = () => {
       )}
 
       {/* CREATE STORY MODAL */}
-      {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
-          <div className="w-full max-w-sm rounded-[32px] bg-[#131b2e] border border-slate-800 p-6 space-y-4 shadow-2xl relative text-xs">
-            
-            <button
-              onClick={() => setIsCreateOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-white cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2 text-sm font-extrabold text-white">
-              <Sparkles className="w-5 h-5 text-[#00B7FF]" />
-              <span>Create Story</span>
+      <GlassModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        title={
+          <div className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
+            <Sparkles className="w-4 h-4 text-[#00B7FF]" />
+            <span>Create New Story</span>
+          </div>
+        }
+        maxWidth="sm"
+      >
+        <div className="space-y-4 text-xs">
+          {uploadError && (
+            <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-bold">
+              {uploadError}
             </div>
+          )}
 
-            {uploadError && (
-              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold">
-                {uploadError}
+          {/* Type selector */}
+          <div className="flex glass-panel p-1 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setStoryType('media')}
+              className={`flex-1 py-2 rounded-xl font-black text-[11px] cursor-pointer transition-all ${storyType === 'media' ? 'bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 shadow-sm' : 'text-slate-500'}`}
+            >
+              Photo / Video
+            </button>
+            <button
+              type="button"
+              onClick={() => setStoryType('text')}
+              className={`flex-1 py-2 rounded-xl font-black text-[11px] cursor-pointer transition-all ${storyType === 'text' ? 'bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 shadow-sm' : 'text-slate-500'}`}
+            >
+              Text Story
+            </button>
+          </div>
+
+          <form onSubmit={handlePublishStory} className="space-y-3.5">
+            {storyType === 'text' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">Story Message</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Write what's on your mind..."
+                    value={textContent}
+                    onChange={(e) => setTextContent(e.target.value)}
+                    className="w-full p-3 rounded-2xl glass-input text-slate-900 dark:text-white font-semibold outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1.5">Background Gradient / Color</label>
+                  <div className="flex gap-2">
+                    {['#00B7FF', '#9B6CFF', '#F45AA8', '#10B981', '#F59E0B', '#EF4444'].map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setTextBgColor(color)}
+                        style={{ backgroundColor: color }}
+                        className={`w-7 h-7 rounded-full border-2 cursor-pointer transition-transform ${textBgColor === color ? 'border-white scale-110 shadow-md' : 'border-transparent'}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <label className="block text-[11px] font-bold text-slate-500">Media Upload</label>
+                <div className="border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-3 text-center glass-panel flex flex-col items-center justify-center relative min-h-36">
+                  {mediaPreview ? (
+                    <div className="relative max-h-44 rounded-xl overflow-hidden bg-slate-950 flex items-center justify-center w-full">
+                      {mediaFile?.type.startsWith('video/') ? (
+                        <video src={mediaPreview} controls autoPlay muted className={`max-h-44 object-contain rounded-lg ${selectedFilter}`} />
+                      ) : (
+                        <img src={mediaPreview} alt="Preview" className={`max-h-44 object-contain rounded-lg ${selectedFilter}`} />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaFile(null);
+                          setMediaPreview(null);
+                        }}
+                        className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 text-white hover:bg-rose-500 transition-colors cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="cursor-pointer flex flex-col items-center py-4">
+                      <ImageIcon className="w-8 h-8 text-[#00B7FF] mb-2 animate-bounce" />
+                      <span className="text-[11px] text-slate-800 dark:text-slate-200 font-black">Choose Photo or Short Video</span>
+                      <span className="text-[9px] text-slate-400 mt-1">Supports JPG, PNG, WEBP, MP4</span>
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Filters Selector */}
+                {mediaPreview && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[10px] font-bold">
+                    {filters.map((f) => (
+                      <button
+                        key={f.name}
+                        type="button"
+                        onClick={() => setSelectedFilter(f.class)}
+                        className={`px-2.5 py-1 rounded-lg border whitespace-nowrap cursor-pointer ${
+                          selectedFilter === f.class
+                            ? "bg-[#00B7FF] text-slate-950 border-[#00B7FF] font-black"
+                            : "glass-pill text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Type selector */}
-            <div className="flex bg-slate-900 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setStoryType('media')}
-                className={`flex-1 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer ${storyType === 'media' ? 'bg-[#00B7FF] text-slate-950 font-black' : 'text-slate-400'}`}
-              >
-                Photo / Video
-              </button>
-              <button
-                type="button"
-                onClick={() => setStoryType('text')}
-                className={`flex-1 py-1.5 rounded-lg font-bold text-[11px] cursor-pointer ${storyType === 'text' ? 'bg-[#00B7FF] text-slate-950 font-black' : 'text-slate-400'}`}
-              >
-                Text Story
-              </button>
-            </div>
+            {/* Add Music Option */}
+            <button
+              type="button"
+              onClick={() => setIsMusicPickerOpen(true)}
+              className={`w-full p-2.5 rounded-2xl border flex items-center justify-between text-xs font-bold transition-all cursor-pointer ${
+                selectedTrack
+                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF]"
+                  : "glass-panel text-slate-700 dark:text-slate-300 hover:border-[#00B7FF]"
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Music className="w-4 h-4 text-[#00B7FF] shrink-0" />
+                <span className="truncate">{selectedTrack ? `${selectedTrack.title}` : "Add Music Track"}</span>
+              </div>
+              <span className="text-[10px] text-cyan-500 font-mono shrink-0">{selectedTrack ? "Change" : "+ Select"}</span>
+            </button>
 
-            <form onSubmit={handlePublishStory} className="space-y-3.5">
-              {storyType === 'text' ? (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 mb-1">Story Message</label>
-                    <textarea
-                      rows={3}
-                      placeholder="Write your story message here..."
-                      value={textContent}
-                      onChange={(e) => setTextContent(e.target.value)}
-                      className="w-full p-3 rounded-xl bg-slate-900 border border-slate-800 text-white font-semibold focus:outline-none focus:border-[#00B7FF]"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 mb-1.5">Select Background Color</label>
-                    <div className="flex gap-2">
-                      {['#4f46e5', '#db2777', '#0891b2', '#059669', '#d97706', '#dc2626'].map((color) => (
-                        <button
-                          key={color}
-                          type="button"
-                          onClick={() => setTextBgColor(color)}
-                          style={{ backgroundColor: color }}
-                          className={`w-6 h-6 rounded-full border-2 cursor-pointer ${textBgColor === color ? 'border-white scale-110' : 'border-transparent'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
+            <button
+              type="submit"
+              disabled={isUploading}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00B7FF] via-[#7EDBE8] to-[#F45AA8] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md hover:opacity-95 cursor-pointer disabled:opacity-50 btn-tactile"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                  <span>Publishing Story...</span>
+                </>
               ) : (
-                <div className="space-y-3">
-                  <label className="block text-[11px] font-bold text-slate-400">Media Upload (Photo / Video)</label>
-                  <div className="border border-dashed border-slate-800 rounded-2xl p-3 text-center bg-slate-900 flex flex-col items-center justify-center relative min-h-36">
-                    {mediaPreview ? (
-                      <div className="relative max-h-44 rounded-xl overflow-hidden bg-slate-950 flex items-center justify-center w-full">
-                        {mediaFile?.type.startsWith('video/') ? (
-                          <video src={mediaPreview} controls autoPlay muted className={`max-h-44 object-contain rounded-lg ${selectedFilter}`} />
-                        ) : (
-                          <img src={mediaPreview} alt="Preview" className={`max-h-44 object-contain rounded-lg ${selectedFilter}`} />
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMediaFile(null);
-                            setMediaPreview(null);
-                          }}
-                          className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 text-white hover:bg-rose-500 transition-colors cursor-pointer"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <label className="cursor-pointer flex flex-col items-center py-4">
-                        <ImageIcon className="w-8 h-8 text-[#00B7FF] mb-2 animate-bounce" />
-                        <span className="text-[11px] text-slate-200 font-bold">Select Image or Short Video</span>
-                        <span className="text-[9px] text-slate-400 mt-1">Supports JPG, PNG, WEBP, MP4</span>
-                        <input
-                          type="file"
-                          accept="image/*,video/*"
-                          onChange={handleFileSelect}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-
-                  {/* Filters Selector */}
-                  {mediaPreview && (
-                    <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[10px] font-bold">
-                      {filters.map((f) => (
-                        <button
-                          key={f.name}
-                          type="button"
-                          onClick={() => setSelectedFilter(f.class)}
-                          className={`px-2.5 py-1 rounded-lg border whitespace-nowrap cursor-pointer ${
-                            selectedFilter === f.class
-                              ? "bg-[#00B7FF] text-slate-950 border-[#00B7FF]"
-                              : "border-slate-800 text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          {f.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <span>Share to Story 🚀</span>
               )}
-
-              {/* Add Music Option */}
-              <button
-                type="button"
-                onClick={() => setIsMusicPickerOpen(true)}
-                className={`w-full p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold transition-all cursor-pointer ${
-                  selectedTrack
-                    ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF]"
-                    : "bg-slate-900 border-slate-800 text-slate-300 hover:border-[#00B7FF]"
-                }`}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <Music className="w-4 h-4 text-[#00B7FF] shrink-0" />
-                  <span className="truncate">{selectedTrack ? `${selectedTrack.title}` : "Add Music / Song"}</span>
-                </div>
-                <span className="text-[10px] text-cyan-400 font-mono shrink-0">{selectedTrack ? "Change" : "+ Select"}</span>
-              </button>
-
-              <button
-                type="submit"
-                disabled={isUploading}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00B7FF] to-purple-600 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-lg hover:opacity-95 cursor-pointer disabled:opacity-50"
-              >
-                {isUploading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                    <span>Publishing Story...</span>
-                  </>
-                ) : (
-                  <span>Share to Story 🚀</span>
-                )}
-              </button>
-            </form>
-
-          </div>
+            </button>
+          </form>
         </div>
-      )}
-
+      </GlassModal>
     </div>
   );
 };

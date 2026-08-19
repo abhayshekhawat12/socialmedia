@@ -10,12 +10,9 @@ import {
   Loader2, 
   Music, 
   Sliders, 
-  Play, 
-  Pause, 
   ChevronRight, 
   ChevronLeft, 
   Type,
-  Crop,
   Volume2,
   Check
 } from "lucide-react";
@@ -28,9 +25,6 @@ import { appCache } from "../lib/cache";
 export function CreatePostModal() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialAudioId = searchParams.get("audioId") || null;
-  const initialAudioTitle = searchParams.get("audioTitle") || null;
-
   const { account } = useAuth();
 
   // Stepper state: upload -> enhance -> publish
@@ -47,7 +41,7 @@ export function CreatePostModal() {
 
   // Filters State
   const visualFilters = [
-    { name: "None", class: "" },
+    { name: "Normal", class: "" },
     { name: "Cinematic Glow", class: "brightness-[1.1] saturate-[1.15] contrast-[1.1] hue-rotate-[5deg]" },
     { name: "Vintage Dream", class: "sepia-[0.35] brightness-[0.95] contrast-[0.9] saturate-[0.85]" },
     { name: "Cyber Punk", class: "saturate-[1.4] hue-rotate-[320deg] brightness-[1.05]" },
@@ -91,12 +85,12 @@ export function CreatePostModal() {
     e.preventDefault();
     if (!file) return;
 
-    const currentAuthor = account || "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
+    const currentAuthor = account || "0x2db4b41ce192d3daaacbd23e87690c3d024c9e7e";
 
     try {
       setIsUploading(true);
       audioHaptics.playSend();
-      setStatusMessage("Optimizing & uploading media to cloud storage...");
+      setStatusMessage("Optimizing & uploading media...");
 
       const fileToUpload = file.type.startsWith("image/")
         ? await compressImage(file, { maxWidth: 1600, quality: 0.85 })
@@ -115,7 +109,7 @@ export function CreatePostModal() {
       const mediaUrl = uploadData.url;
       const mediaCid = uploadData.cid || "";
 
-      setStatusMessage("Saving post details...");
+      setStatusMessage("Saving to database...");
 
       if (mediaType === "video") {
         const pulseRes = await fetch("/api/pulse", {
@@ -136,7 +130,7 @@ export function CreatePostModal() {
         });
 
         if (!pulseRes.ok) throw new Error("Failed to save short video to database.");
-        appCache.invalidate("feed_");
+        appCache.clear();
         router.push("/pulse");
       } else {
         const postRes = await fetch("/api/posts", {
@@ -154,8 +148,11 @@ export function CreatePostModal() {
         });
 
         if (!postRes.ok) throw new Error("Failed to save post to database.");
-        appCache.invalidate("feed_");
+        appCache.clear();
         router.push("/feed");
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("pulse_post_created"));
+        }
       }
     } catch (err: any) {
       console.error(err);
@@ -169,7 +166,7 @@ export function CreatePostModal() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4 text-left pb-12 animate-in fade-in select-none">
+    <div className="max-w-2xl mx-auto space-y-4 text-left pb-12 animate-fadeIn select-none">
       
       {/* Music Picker Bottom Sheet Modal */}
       <MusicPickerModal
@@ -182,18 +179,18 @@ export function CreatePostModal() {
       {/* Top Workflow Stepper Navigation */}
       <div className="flex items-center justify-between px-2 pt-1">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-2xl bg-gradient-to-tr from-[#00B7FF] to-purple-600 flex items-center justify-center text-white shadow-sm font-black text-xs">
+          <div className="w-8 h-8 rounded-2xl bg-gradient-to-tr from-[#00B7FF] via-[#7EDBE8] to-[#F45AA8] flex items-center justify-center text-slate-950 shadow-sm font-black text-xs">
             {creationStep === "upload" ? "1" : creationStep === "enhance" ? "2" : "3"}
           </div>
           <div>
-            <h1 className="font-extrabold text-sm text-slate-900 dark:text-white">
+            <h1 className="font-black text-sm text-slate-900 dark:text-white">
               {creationStep === "upload" && "Select Content"}
               {creationStep === "enhance" && "Creative Studio"}
               {creationStep === "publish" && "Publish Details"}
             </h1>
-            <p className="text-[10px] text-slate-400 font-semibold">
-              {creationStep === "upload" && "Upload photo or reel from your gallery"}
-              {creationStep === "enhance" && "Add Indian music, filters, adjustments & text"}
+            <p className="text-[10px] text-slate-400 font-bold">
+              {creationStep === "upload" && "Upload photo or reel from your device"}
+              {creationStep === "enhance" && "Add music, filters, adjustments & text overlay"}
               {creationStep === "publish" && "Add caption, location and share"}
             </p>
           </div>
@@ -209,12 +206,10 @@ export function CreatePostModal() {
         </div>
       </div>
 
-      {/* ========================================================================= */}
       {/* STEP 1: UPLOAD MEDIA */}
-      {/* ========================================================================= */}
       {creationStep === "upload" && (
-        <div className="p-8 rounded-[2.5rem] glass-card border border-slate-200 dark:border-slate-800 text-center space-y-5">
-          <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#00B7FF] rounded-[2rem] p-10 block cursor-pointer transition-colors glass-panel group">
+        <div className="p-8 rounded-[32px] glass-card border border-white/80 dark:border-white/10 text-center space-y-5">
+          <label className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#00B7FF] rounded-[28px] p-10 block cursor-pointer transition-colors glass-panel group btn-tactile">
             <UploadCloud className="w-14 h-14 text-[#00B7FF] mx-auto mb-3 group-hover:scale-110 transition-transform" />
             <h3 className="font-black text-sm text-slate-900 dark:text-white">
               Choose Photo or Video to Upload
@@ -222,7 +217,7 @@ export function CreatePostModal() {
             <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto font-medium">
               High resolution JPG, PNG, WEBP images or MP4, MOV short videos
             </p>
-            <span className="inline-block mt-4 px-5 py-2.5 rounded-full bg-[#00B7FF] text-slate-950 font-black text-xs shadow-md">
+            <span className="inline-block mt-4 px-6 py-2.5 rounded-full bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black text-xs shadow-md">
               Browse Device Files
             </span>
             <input
@@ -235,14 +230,11 @@ export function CreatePostModal() {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* STEP 2: CREATIVE STUDIO (MUSIC + FILTERS + ADJUST + TEXT) */}
-      {/* ========================================================================= */}
+      {/* STEP 2: CREATIVE STUDIO */}
       {creationStep === "enhance" && previewUrl && (
         <div className="space-y-4">
-          
-          {/* Main Visual Preview Canvas */}
-          <div className="relative rounded-[2rem] overflow-hidden bg-slate-950 max-h-[440px] flex items-center justify-center border border-slate-200 dark:border-slate-800 shadow-xl">
+          {/* Visual Preview Canvas */}
+          <div className="relative rounded-[28px] overflow-hidden bg-slate-950 max-h-[440px] flex items-center justify-center border border-white/80 dark:border-white/10 shadow-glass">
             {mediaType === "video" ? (
               <video
                 src={previewUrl}
@@ -260,91 +252,86 @@ export function CreatePostModal() {
               />
             )}
 
-            {/* Text Overlay Sticker */}
+            {/* Text Overlay */}
             {textOverlay && (
               <div className="absolute inset-x-4 bottom-16 flex justify-center pointer-events-none">
-                <div className="bg-black/60 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/20 text-white font-black text-xs text-center shadow-lg">
+                <div className="glass-dock px-4 py-2 rounded-2xl text-white font-black text-xs text-center shadow-lg">
                   {textOverlay}
                 </div>
               </div>
             )}
 
-            {/* Selected Music Badge Overlay */}
+            {/* Selected Music Badge */}
             {selectedTrack && (
-              <div className="absolute top-3 left-3 z-20 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white text-xs font-bold flex items-center gap-1.5">
+              <div className="absolute top-3 left-3 z-20 px-3 py-1.5 rounded-full glass-dock text-white text-xs font-bold flex items-center gap-1.5">
                 <Volume2 className="w-3.5 h-3.5 text-[#00B7FF] animate-pulse" />
                 <span className="truncate max-w-[130px]">{selectedTrack.title}</span>
               </div>
             )}
           </div>
 
-          {/* Enhancement Toolbar: Music, Filters, Adjust, Text */}
-          <div className="grid grid-cols-4 gap-2 text-center text-xs font-black">
-            
-            {/* Music Button */}
+          {/* Enhancement Toolbar */}
+          <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold select-none">
             <button
               onClick={() => setIsMusicPickerOpen(true)}
-              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer ${
+              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer btn-tactile ${
                 selectedTrack
-                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF]"
-                  : "glass-card border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-[#00B7FF]"
+                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF] font-black"
+                  : "glass-pill text-slate-700 dark:text-slate-200 hover:text-slate-900"
               }`}
             >
               <Music className="w-4 h-4" />
-              <span>{selectedTrack ? "Music Added" : "Add Music"}</span>
+              <span>{selectedTrack ? "Music Added" : "Music"}</span>
             </button>
 
-            {/* Adjust Button */}
             <button
               onClick={() => {
                 setShowAdjustPanel(!showAdjustPanel);
                 setShowTextControl(false);
               }}
-              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer ${
+              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer btn-tactile ${
                 showAdjustPanel
-                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF]"
-                  : "glass-card border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-[#00B7FF]"
+                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF] font-black"
+                  : "glass-pill text-slate-700 dark:text-slate-200 hover:text-slate-900"
               }`}
             >
               <Sliders className="w-4 h-4" />
               <span>Adjust</span>
             </button>
 
-            {/* Text Overlay Button */}
             <button
               onClick={() => {
                 setShowTextControl(!showTextControl);
                 setShowAdjustPanel(false);
               }}
-              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer ${
+              className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1 cursor-pointer btn-tactile ${
                 showTextControl || textOverlay
-                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF]"
-                  : "glass-card border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-[#00B7FF]"
+                  ? "bg-cyan-500/15 border-[#00B7FF] text-[#00B7FF] font-black"
+                  : "glass-pill text-slate-700 dark:text-slate-200 hover:text-slate-900"
               }`}
             >
               <Type className="w-4 h-4" />
               <span>Text</span>
             </button>
 
-            {/* Next Step Button */}
             <button
               onClick={() => {
                 audioHaptics.playTap();
                 setCreationStep("publish");
               }}
-              className="p-3 rounded-2xl bg-gradient-to-r from-[#00B7FF] to-indigo-600 text-slate-950 font-black shadow-md flex flex-col items-center gap-1 cursor-pointer hover:opacity-90 transition-opacity"
+              className="p-3 rounded-2xl bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 font-black shadow-md flex flex-col items-center gap-1 cursor-pointer btn-tactile"
             >
               <ChevronRight className="w-4 h-4" />
               <span>Next</span>
             </button>
           </div>
 
-          {/* Adjust Panel (Brightness, Contrast, Saturation) */}
+          {/* Adjust Panel */}
           {showAdjustPanel && (
-            <div className="p-4 rounded-2xl glass-card border border-slate-200 dark:border-slate-800 space-y-3 animate-in fade-in">
-              <h4 className="font-extrabold text-xs text-slate-900 dark:text-white">Color Adjustments</h4>
+            <div className="p-4 rounded-3xl glass-card border border-white/80 dark:border-white/10 space-y-3 animate-fadeIn">
+              <h4 className="font-black text-xs text-slate-900 dark:text-white">Color Adjustments</h4>
               
-              <div className="space-y-2 text-xs">
+              <div className="space-y-2 text-xs font-bold">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">Brightness</span>
                   <input
@@ -389,21 +376,21 @@ export function CreatePostModal() {
 
           {/* Text Input Panel */}
           {showTextControl && (
-            <div className="p-3 rounded-2xl glass-card border border-slate-200 dark:border-slate-800 space-y-2 animate-in fade-in">
+            <div className="p-3 rounded-2xl glass-card border border-white/80 dark:border-white/10 space-y-2 animate-fadeIn">
               <input
                 type="text"
                 placeholder="Type text sticker..."
                 value={textOverlay}
                 onChange={(e) => setTextOverlay(e.target.value)}
-                className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold outline-none focus:border-[#00B7FF]"
+                className="w-full p-2.5 rounded-xl glass-input text-xs font-semibold text-slate-900 dark:text-white outline-none"
               />
             </div>
           )}
 
           {/* Filters Carousel */}
           <div className="space-y-2">
-            <h4 className="font-extrabold text-xs text-slate-900 dark:text-white px-1">Visual Filters</h4>
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar text-xs font-bold">
+            <h4 className="font-black text-xs text-slate-800 dark:text-slate-200 px-1">Visual Filters</h4>
+            <div className="flex gap-2 overflow-x-auto pb-1 hide-scrollbar text-xs font-bold">
               {visualFilters.map((f) => (
                 <button
                   key={f.name}
@@ -411,10 +398,10 @@ export function CreatePostModal() {
                     audioHaptics.playTap();
                     setSelectedFilter(f);
                   }}
-                  className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer btn-tactile ${
                     selectedFilter.name === f.name
                       ? "bg-[#00B7FF] text-slate-950 font-black shadow-sm"
-                      : "glass-card text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                      : "glass-pill text-slate-600 dark:text-slate-300 hover:text-slate-900"
                   }`}
                 >
                   {f.name}
@@ -422,18 +409,13 @@ export function CreatePostModal() {
               ))}
             </div>
           </div>
-
         </div>
       )}
 
-      {/* ========================================================================= */}
       {/* STEP 3: PUBLISH DETAILS */}
-      {/* ========================================================================= */}
       {creationStep === "publish" && (
         <form onSubmit={handleFinalPublish} className="space-y-4">
-          <div className="p-5 rounded-[2rem] glass-card border border-slate-200 dark:border-slate-800 space-y-4">
-            
-            {/* Caption Input */}
+          <div className="p-6 rounded-[32px] glass-card border border-white/80 dark:border-white/10 space-y-4 shadow-glass">
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-1">
                 Caption & Hashtags
@@ -442,13 +424,12 @@ export function CreatePostModal() {
                 rows={3}
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
-                placeholder="Share your thoughts, hashtags, or mention friends..."
-                className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-900 dark:text-white outline-none focus:border-[#00B7FF]"
+                placeholder="Share your thoughts, hashtags, or mention creators..."
+                className="w-full p-3.5 rounded-2xl glass-input text-xs font-semibold text-slate-900 dark:text-white outline-none"
                 required
               />
             </div>
 
-            {/* Location Input */}
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-1">
                 Location (Optional)
@@ -459,38 +440,36 @@ export function CreatePostModal() {
                   type="text"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
-                  placeholder="e.g. Mumbai, India or Jaipur, Rajasthan"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-900 dark:text-white outline-none focus:border-[#00B7FF]"
+                  placeholder="e.g. Mumbai, India"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-2xl glass-input text-xs font-semibold text-slate-900 dark:text-white outline-none"
                 />
               </div>
             </div>
 
-            {/* Selected Music Summary */}
             {selectedTrack && (
-              <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-between">
+              <div className="p-3 rounded-2xl glass-panel border border-cyan-500/20 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Music className="w-4 h-4 text-[#00B7FF]" />
                   <div>
-                    <p className="font-extrabold text-xs text-[#00B7FF]">{selectedTrack.title}</p>
-                    <p className="text-[10px] text-slate-400">{selectedTrack.artist} • {selectedTrack.category}</p>
+                    <p className="font-black text-xs text-[#00B7FF]">{selectedTrack.title}</p>
+                    <p className="text-[10px] text-slate-400 font-medium">{selectedTrack.artist} • {selectedTrack.category}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsMusicPickerOpen(true)}
-                  className="text-xs font-bold text-cyan-400 hover:underline cursor-pointer"
+                  className="text-xs font-black text-cyan-400 hover:underline cursor-pointer"
                 >
                   Change
                 </button>
               </div>
             )}
 
-            {/* Navigation & Submit CTA */}
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
                 onClick={() => setCreationStep("enhance")}
-                className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer inline-flex items-center gap-1"
+                className="px-4 py-2.5 rounded-2xl text-xs font-bold glass-pill text-slate-500 hover:text-slate-900 cursor-pointer inline-flex items-center gap-1 btn-tactile"
               >
                 <ChevronLeft className="w-4 h-4" />
                 <span>Back to Edit</span>
@@ -499,7 +478,7 @@ export function CreatePostModal() {
               <button
                 type="submit"
                 disabled={isUploading}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#00B7FF] via-[#7EDBE8] to-indigo-600 text-slate-950 font-black text-xs shadow-md hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 inline-flex items-center gap-2"
+                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-[#00B7FF] via-[#7EDBE8] to-[#F45AA8] text-slate-950 font-black text-xs shadow-md hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50 inline-flex items-center gap-2 btn-tactile"
               >
                 {isUploading ? (
                   <>
@@ -513,9 +492,8 @@ export function CreatePostModal() {
             </div>
 
             {statusMessage && (
-              <p className="text-center text-[11px] font-bold text-cyan-500">{statusMessage}</p>
+              <p className="text-center text-[11px] font-black text-cyan-500">{statusMessage}</p>
             )}
-
           </div>
         </form>
       )}

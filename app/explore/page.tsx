@@ -1,24 +1,21 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, Suspense, useRef } from "react";
+import React, { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { 
   Search, 
-  Compass, 
-  ShieldCheck, 
   Sparkles, 
-  TrendingUp, 
+  SlidersHorizontal, 
+  Check, 
+  Play, 
   Users, 
   Tag, 
-  Music, 
-  Heart, 
-  Eye, 
-  Play, 
-  Volume2,
-  VolumeX,
-  Grid
+  TrendingUp,
+  X
 } from "lucide-react";
+import { audioHaptics } from "../../lib/audioHaptics";
+import { GlassChip } from "../../components/ui/GlassChip";
 
 export const dynamic = "force-dynamic";
 
@@ -28,8 +25,7 @@ function ExploreContent() {
   const initialQuery = searchParams.get("q") || "";
 
   const [query, setQuery] = useState(initialQuery);
-  const [activeTab, setActiveTab] = useState<"all" | "videos" | "audio" | "creators" | "hashtags">("all");
-  
+  const [activeCategory, setActiveCategory] = useState("Trending");
   const [results, setResults] = useState<{
     trendingHashtags?: any[];
     trendingCreators?: any[];
@@ -39,13 +35,18 @@ function ExploreContent() {
     hashtags?: any[];
   }>({});
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState("All");
-
   const [reels, setReels] = useState<any[]>([]);
-  const [audioList, setAudioList] = useState<any[]>([]);
-  const [hoveredReelId, setHoveredReelId] = useState<string | null>(null);
 
-  const categories = ["All", "AI", "Web3", "Blockchain", "Tech", "Photography", "Digital Art"];
+  const categories = [
+    "Trending",
+    "Creators",
+    "Music",
+    "Photography",
+    "Design",
+    "Architecture",
+    "Cinema",
+    "Tech",
+  ];
 
   const handleSearch = useCallback(async (q: string) => {
     try {
@@ -64,18 +65,10 @@ function ExploreContent() {
 
   const fetchExploreData = async () => {
     try {
-      // Fetch dynamic reels for explore grid
       const reelsRes = await fetch("/api/pulse");
       if (reelsRes.ok) {
         const reelsData = await reelsRes.json();
         setReels(reelsData.pulses || []);
-      }
-
-      // Fetch dynamic audio
-      const audioRes = await fetch("/api/audio");
-      if (audioRes.ok) {
-        const audioData = await audioRes.json();
-        setAudioList(audioData.audio || []);
       }
     } catch (e) {
       console.error("Explore fetch error:", e);
@@ -87,348 +80,203 @@ function ExploreContent() {
   }, []);
 
   useEffect(() => {
-    handleSearch(query);
+    const timer = setTimeout(() => {
+      handleSearch(query);
+    }, 250);
+    return () => clearTimeout(timer);
   }, [query, handleSearch]);
 
-  // Filter video list based on category
-  const filteredReels = selectedCategory === "All"
-    ? reels
-    : reels.filter(r => r.category && r.category.toLowerCase() === selectedCategory.toLowerCase());
-
-  // Extract display lists
   const displayedPosts = results.posts || results.trendingPosts || [];
   const displayedUsers = results.users || results.trendingCreators || [];
-  const displayedTags = results.hashtags || results.trendingHashtags || [];
 
   return (
-    <div className="space-y-8 max-w-4xl mx-auto text-left">
-      {/* Search Header */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 animate-pulse">
-            <Compass className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 dark:text-white">Discover & Explore</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Search cryptographic hashes, creators, trending audios, or explore short-video grids</p>
-          </div>
-        </div>
-
-        {/* Search Input Capsule */}
-        <div className="relative group">
-          <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#00B7FF] transition-colors" />
+    <div className="space-y-4 text-left pb-16 select-none w-full max-w-full animate-fadeIn">
+      {/* Top Search & Filter Header */}
+      <div className="flex items-center gap-2 px-1 sm:px-0">
+        <div className="flex-1 relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search wallet hashes (0x...), @username, #hashtags, sound titles..."
-            className="w-full pl-12 pr-4 py-3.5 text-xs font-bold rounded-full glass-card text-slate-900 dark:text-slate-100 focus:outline-none focus:border-[#00B7FF] focus:scale-[1.01] shadow-glass focus:shadow-glass-strong transition-all"
+            placeholder="Search Pulse creators, posts, tags..."
+            className="w-full glass-input text-slate-900 dark:text-white text-xs font-semibold rounded-2xl py-3 pl-10 pr-8 outline-none border border-white/80 dark:border-white/10 transition shadow-sm"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => audioHaptics.playTap()}
+          className="w-10 h-10 rounded-2xl glass-pill flex items-center justify-center text-slate-700 dark:text-slate-200 btn-tactile shrink-0 cursor-pointer"
+          title="Filters"
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Category Chips Scroll */}
+      <div className="flex gap-2 overflow-x-auto hide-scrollbar px-1 sm:px-0 py-1">
+        {categories.map((cat) => (
+          <GlassChip
+            key={cat}
+            label={cat}
+            isActive={activeCategory === cat}
+            onClick={() => setActiveCategory(cat)}
+          />
+        ))}
+      </div>
+
+      {/* Query Search Results: Users */}
+      {query && displayedUsers.length > 0 && (
+        <div className="px-1 sm:px-0 space-y-2.5">
+          <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-[#00B7FF]" /> Creators
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {displayedUsers.slice(0, 4).map((u: any) => (
+              <Link
+                key={u.id || u.walletAddress}
+                href={`/profile/${u.walletAddress || u.id}`}
+                className="flex items-center gap-3 p-3 rounded-2xl glass-card border border-white/80 dark:border-white/10 hover:shadow-subtle transition btn-tactile"
+              >
+                <div className="w-10 h-10 rounded-full overflow-hidden border border-white p-0.5 bg-gradient-to-tr from-[#00B7FF] to-[#7EDBE8] shrink-0">
+                  <img
+                    src={
+                      u.profile?.avatarUrl ||
+                      u.avatarUrl ||
+                      `https://api.dicebear.com/7.x/bottts/svg?seed=${u.walletAddress || u.id}`
+                    }
+                    alt="User"
+                    className="w-full h-full object-cover rounded-full bg-slate-900"
+                  />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-black text-slate-900 dark:text-white truncate">
+                      {u.profile?.displayName || u.displayName || u.username}
+                    </span>
+                    <span className="w-3.5 h-3.5 rounded-full bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 flex items-center justify-center shrink-0">
+                      <Check className="w-2 h-2 stroke-[3]" />
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                    @{u.profile?.username || u.username || (u.walletAddress && u.walletAddress.slice(0, 8))}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main Responsive Masonry & Bento Grid */}
+      <div className="masonry-grid px-1 sm:px-0">
+        {/* Large Hero Item */}
+        <div className="masonry-item-large relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-950">
+          <img
+            src="https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800"
+            alt="Neon Horizons"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-4 text-white">
+            <h4 className="text-sm sm:text-base font-black leading-tight mb-1">Architectural Horizons</h4>
+            <div className="flex items-center gap-2 text-[10px] font-bold text-cyan-300">
+              <span>@cyber_spaces</span>
+              <span>•</span>
+              <span>Featured</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Tall Portrait Item */}
+        <div className="masonry-item-tall relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-950">
+          <img
+            src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600"
+            alt="Portrait Item"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+          <div className="absolute top-3 right-3 w-8 h-8 rounded-full glass-dock text-white flex items-center justify-center shadow-md">
+            <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
+          </div>
+        </div>
+
+        {/* Square Item 1 */}
+        <div className="masonry-item-square relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-900">
+          <img
+            src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500"
+            alt="Luxury Design"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         </div>
 
-        {/* Explore Sub-navigation Tabs */}
-        <div className="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar">
-          {(["all", "videos", "audio", "creators", "hashtags"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab);
-                if (tab !== "all" && query === "") {
-                  handleSearch("");
-                }
-              }}
-              className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-full transition-all border shrink-0 btn-tactile ${
-                activeTab === tab
-                  ? "bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] border-transparent text-slate-950 shadow-md"
-                  : "glass-panel border-white/40 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+        {/* Square Item 2 */}
+        <div className="masonry-item-square relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-900">
+          <img
+            src="https://images.unsplash.com/photo-1513694203232-719a280e022f?w=500"
+            alt="Minimal Interior"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
         </div>
-      </div>
 
-      {/* RENDER DYNAMIC GRID & SECTIONS WHEN QUERY IS EMPTY */}
-      {query === "" && (
-        <div className="space-y-8">
-          
-          {/* Category Filter Pills for video grid */}
-          <div className="space-y-3">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-              <Grid className="w-3.5 h-3.5 text-[#00B7FF]" />
-              Explore Short Videos ({filteredReels.length})
-            </h3>
-            
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-full transition-colors shrink-0 ${
-                    selectedCategory === cat
-                      ? "bg-[#00B7FF] text-white"
-                      : "bg-slate-150 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-white"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-
-            {/* Video Masonry/Grid Layout */}
-            {filteredReels.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {filteredReels.map((reel, index) => (
-                  <div
-                    key={reel.id}
-                    onClick={() => router.push(`/pulse?index=${index}`)}
-                    onMouseEnter={() => setHoveredReelId(reel.id)}
-                    onMouseLeave={() => setHoveredReelId(null)}
-                    className="relative aspect-[9/14] rounded-3xl overflow-hidden bg-slate-950 border border-slate-200 dark:border-slate-800 group cursor-pointer shadow-md hover:shadow-lg transition-all"
-                  >
-                    <video 
-                      src={reel.videoUrl} 
-                      muted 
-                      loop
-                      playsInline
-                      className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition-transform duration-500"
-                      ref={(el) => {
-                        if (el) {
-                          if (hoveredReelId === reel.id) {
-                            el.play().catch(() => {});
-                          } else {
-                            el.pause();
-                            el.currentTime = 0;
-                          }
-                        }
-                      }}
-                    />
-                    
-                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors" />
-                    
-                    {/* Floating Info */}
-                    <div className="absolute bottom-3 inset-x-3 text-left space-y-1 z-15">
-                      <p className="text-[11px] font-black text-white truncate">@{reel.author.username}</p>
-                      <div className="flex items-center justify-between text-[9px] text-slate-300 font-bold">
-                        <span className="flex items-center gap-0.5"><Heart className="w-2.5 h-2.5 text-red-500 fill-red-500" /> {reel.likeCount}</span>
-                        <span className="flex items-center gap-0.5"><Eye className="w-2.5 h-2.5 text-cyan-400" /> {reel.viewsCount}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="py-12 border border-dashed border-slate-250 dark:border-slate-850 rounded-3xl text-center text-xs font-bold text-slate-400">
-                No short videos found under category "{selectedCategory}".
-              </div>
-            )}
+        {/* Wide Item */}
+        <div className="masonry-item-wide relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-950">
+          <img
+            src="https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?w=800"
+            alt="Dune Landscape"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex items-end p-3 text-white">
+            <span className="text-xs font-black uppercase tracking-wider text-cyan-300">Serene Horizons</span>
           </div>
-
-          {/* Trending Songs Row */}
-          {audioList.length > 0 && (
-            <div className="space-y-3">
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <Music className="w-3.5 h-3.5 text-purple-400" />
-                Hot Sounds & Backing Tracks
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {audioList.slice(0, 4).map((song) => (
-                  <div 
-                    key={song.id}
-                    onClick={() => router.push(`/trending?tab=audio`)}
-                    className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131b2e] hover:border-cyan-500/30 transition-all cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <img src={song.thumbnailUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100"} alt="Cover" className="w-10 h-10 rounded-xl object-cover shrink-0" />
-                      <div className="text-left min-w-0">
-                        <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{song.title}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold mt-0.5 truncate">{song.artist}</p>
-                      </div>
-                    </div>
-                    <span className="text-[9px] font-black text-cyan-500 shrink-0">{(song.useCount / 1000).toFixed(1)}k use</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Top Creators Avatars */}
-          {displayedUsers.length > 0 && (
-            <div className="space-y-3">
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-emerald-400" />
-                Featured Web3 Creators
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {displayedUsers.slice(0, 4).map((userObj: any) => {
-                  const u = userObj.profile || userObj;
-                  const addr = userObj.user?.walletAddress || userObj.walletAddress || "0x000";
-                  return (
-                    <div 
-                      key={userObj.id}
-                      onClick={() => router.push(`/profile/${addr}`)}
-                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131b2e] text-center space-y-2 cursor-pointer hover:border-cyan-500 transition-colors"
-                    >
-                      <img 
-                        src={u.avatarUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"} 
-                        alt="Avatar" 
-                        className="w-12 h-12 rounded-full mx-auto object-cover border border-white" 
-                      />
-                      <div>
-                        <p className="text-xs font-black text-slate-900 dark:text-white truncate">{u.displayName}</p>
-                        <p className="text-[10px] text-cyan-400 font-mono truncate mt-0.5">@{u.username}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
-      )}
 
-      {/* RENDER CATEGORIZED SEARCH RESULTS WHEN QUERY IS ACTIVE */}
-      {query !== "" && (
-        <div className="space-y-6">
-          {loading ? (
-            <div className="py-20 text-center text-xs font-bold text-slate-400 flex flex-col items-center gap-2">
-              <span className="animate-spin w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full" />
-              <span>Querying blockchain profiles & metadata...</span>
+        {/* Dynamic Database Posts In Grid */}
+        {displayedPosts.map((p: any, idx: number) => {
+          if (!p.mediaUrl) return null;
+          const isVideo = p.mediaType === "video";
+
+          return (
+            <div
+              key={p.id || idx}
+              onClick={() => router.push(`/post/${p.id}`)}
+              className="masonry-item-square relative rounded-[28px] overflow-hidden group cursor-pointer shadow-glass border border-white/80 dark:border-white/10 bg-slate-900"
+            >
+              {isVideo ? (
+                <video
+                  src={p.mediaUrl}
+                  className="w-full h-full object-cover"
+                  muted
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={p.mediaUrl}
+                  alt={p.caption || "Explore post"}
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                />
+              )}
+              {isVideo && (
+                <div className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full glass-dock text-white flex items-center justify-center shadow-md">
+                  <Play className="w-3 h-3 fill-white ml-0.5" />
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="space-y-6">
-              
-              {/* 1. FILTER: CREATORS */}
-              {(activeTab === "all" || activeTab === "creators") && displayedUsers.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-purple-400" /> Users ({displayedUsers.length})
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {displayedUsers.map((userObj: any) => {
-                      const u = userObj.profile || userObj;
-                      const addr = userObj.user?.walletAddress || userObj.walletAddress || "0x000";
-                      return (
-                        <div 
-                          key={userObj.id}
-                          onClick={() => router.push(`/profile/${addr}`)}
-                          className="flex items-center gap-3 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131b2e] cursor-pointer hover:border-[#00B7FF] transition-all"
-                        >
-                          <img src={u.avatarUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} alt="Avatar" className="w-10 h-10 rounded-full object-cover shrink-0" />
-                          <div className="min-w-0 text-left">
-                            <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{u.displayName}</h4>
-                            <p className="text-[10px] font-mono text-cyan-400 truncate">@{u.username}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 2. FILTER: VIDEOS / POSTS */}
-              {(activeTab === "all" || activeTab === "videos") && displayedPosts.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                    <Play className="w-3.5 h-3.5 text-cyan-400" /> Videos & Posts ({displayedPosts.length})
-                  </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {displayedPosts.map((post: any) => (
-                      <div 
-                        key={post.id}
-                        onClick={() => router.push(post.mediaType === "video" ? "/pulse" : `/post/${post.id}`)}
-                        className="relative aspect-square rounded-3xl bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden cursor-pointer group"
-                      >
-                        {post.mediaType === "video" ? (
-                          <video src={post.mediaUrl} className="w-full h-full object-cover opacity-80" />
-                        ) : (
-                          <img src={post.mediaUrl} alt="Post cover" className="w-full h-full object-cover opacity-80 group-hover:scale-105 transition-transform duration-300" />
-                        )}
-                        <div className="absolute inset-0 bg-black/10 group-hover:bg-black/30" />
-                        
-                        {post.mediaType === "video" && (
-                          <span className="absolute top-2.5 right-2.5 p-1 rounded-lg bg-black/60 text-white">
-                            <Play className="w-3 h-3 fill-current" />
-                          </span>
-                        )}
-
-                        <div className="absolute bottom-2.5 inset-x-2.5 text-left truncate text-[10px] font-bold text-white">
-                          {post.caption}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 3. FILTER: HASHTAGS */}
-              {(activeTab === "all" || activeTab === "hashtags") && displayedTags.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                    <Tag className="w-3.5 h-3.5 text-orange-400" /> Hashtags ({displayedTags.length})
-                  </h4>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {displayedTags.map((t: any) => (
-                      <button
-                        key={t.id || t.tag}
-                        onClick={() => setQuery(`#${t.tag.replace('#', '')}`)}
-                        className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-black text-cyan-500 hover:border-cyan-500 transition-colors"
-                      >
-                        #{t.tag.replace('#', '')} ({t.postCount || 1})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 4. FILTER: AUDIO */}
-              {(activeTab === "all" || activeTab === "audio") && (
-                <div className="space-y-3">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                    <Music className="w-3.5 h-3.5 text-yellow-400" /> Backing Tracks
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {audioList
-                      .filter(s => s.title.toLowerCase().includes(query.toLowerCase().replace('#', '')) || s.artist.toLowerCase().includes(query.toLowerCase()))
-                      .map((song) => (
-                        <div 
-                          key={song.id}
-                          onClick={() => router.push("/trending?tab=audio")}
-                          className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131b2e] hover:border-cyan-500/30 transition-all cursor-pointer group"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <img src={song.thumbnailUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100"} alt="Cover" className="w-10 h-10 rounded-xl object-cover shrink-0" />
-                            <div className="text-left min-w-0">
-                              <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{song.title}</h4>
-                              <p className="text-[10px] text-slate-400 font-bold mt-0.5 truncate">{song.artist}</p>
-                            </div>
-                          </div>
-                          <span className="text-[9px] font-black text-cyan-500 shrink-0">{(song.useCount / 1000).toFixed(1)}k uses</span>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Empty state search */}
-              {displayedUsers.length === 0 && displayedPosts.length === 0 && displayedTags.length === 0 && (
-                <div className="py-20 border border-dashed border-slate-250 dark:border-slate-850 rounded-3xl text-center text-xs font-bold text-slate-400">
-                  No matching creators, tags, or content found for query "{query}".
-                </div>
-              )}
-
-            </div>
-          )}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 export default function ExplorePage() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading explore page...</div>}>
+    <Suspense fallback={<div className="p-8 text-center text-xs font-bold text-slate-400">Loading Pulse Explore...</div>}>
       <ExploreContent />
     </Suspense>
   );

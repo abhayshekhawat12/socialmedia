@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#080e1a"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="auroraGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00B7FF"/>
+      <stop offset="50%" stop-color="#7EDBE8"/>
+      <stop offset="85%" stop-color="#9B6CFF"/>
+      <stop offset="100%" stop-color="#F45AA8"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- App Rounded Base -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)"/>
+  
+  <!-- Subtle Glass Border -->
+  <rect x="2" y="2" width="508" height="508" rx="126" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="4"/>
+
+  <!-- Ambient Light Orbs -->
+  <circle cx="160" cy="160" r="100" fill="#00B7FF" opacity="0.25" filter="url(#glow)"/>
+  <circle cx="360" cy="360" r="100" fill="#F45AA8" opacity="0.2" filter="url(#glow)"/>
+
+  <!-- Pulse Brand Icon -->
+  <g filter="url(#glow)" transform="translate(96, 96)">
+    <!-- Dynamic Pulse Sparkle / Wave -->
+    <path d="M160 32 C 165 110, 210 155, 288 160 C 210 165, 165 210, 160 288 C 155 210, 110 165, 32 160 C 110 155, 155 110, 160 32 Z" fill="url(#auroraGrad)"/>
+    <!-- Center Core Dot -->
+    <circle cx="160" cy="160" r="28" fill="#ffffff" opacity="0.95"/>
+  </g>
+</svg>

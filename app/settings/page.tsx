@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../../lib/authContext';
 import { useTheme } from '../../lib/themeContext';
 import { useSettings } from '../../lib/settingsContext';
+import { audioHaptics } from '../../lib/audioHaptics';
 import { ContentPreferencesModal } from '../../components/ContentPreferencesModal';
 import {
   ArrowLeft,
@@ -527,11 +528,9 @@ export default function SettingsPage() {
                   </div>
                   <input
                     type="checkbox"
-                    defaultChecked={typeof window !== 'undefined' ? localStorage.getItem('aura_ui_sounds') !== 'false' : true}
+                    defaultChecked={audioHaptics.getSoundEnabled()}
                     onChange={(e) => {
-                      if (typeof window !== 'undefined') {
-                        localStorage.setItem('aura_ui_sounds', e.target.checked ? 'true' : 'false');
-                      }
+                      audioHaptics.setSoundEnabled(e.target.checked);
                     }}
                     className="accent-[#00B7FF] w-5 h-5 cursor-pointer"
                   />
@@ -544,11 +543,9 @@ export default function SettingsPage() {
                   </div>
                   <input
                     type="checkbox"
-                    defaultChecked={typeof window !== 'undefined' ? localStorage.getItem('aura_ui_haptics') !== 'false' : true}
+                    defaultChecked={audioHaptics.getHapticsEnabled()}
                     onChange={(e) => {
-                      if (typeof window !== 'undefined') {
-                        localStorage.setItem('aura_ui_haptics', e.target.checked ? 'true' : 'false');
-                      }
+                      audioHaptics.setHapticsEnabled(e.target.checked);
                     }}
                     className="accent-[#00B7FF] w-5 h-5 cursor-pointer"
                   />

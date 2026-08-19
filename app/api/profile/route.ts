@@ -14,9 +14,12 @@ export async function GET(req: NextRequest) {
 
   const profile = await prisma.profile.findFirst({
     where: {
-      user: {
-        walletAddress: address,
-      },
+      OR: [
+        { user: { walletAddress: address } },
+        { user: { id: address } },
+        { user: { email: address } },
+        { user: { googleId: address } },
+      ],
     },
     include: {
       user: true,
@@ -27,10 +30,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
+  const targetIdentifier = profile.user.walletAddress || profile.user.id;
+
   const [followersCount, followingCount, postsCount] = await Promise.all([
-    prisma.follow.count({ where: { followingAddress: address } }),
-    prisma.follow.count({ where: { followerAddress: address } }),
-    prisma.post.count({ where: { authorAddress: address } }),
+    prisma.follow.count({ where: { followingAddress: targetIdentifier } }),
+    prisma.follow.count({ where: { followerAddress: targetIdentifier } }),
+    prisma.post.count({ where: { authorAddress: targetIdentifier } }),
   ]);
 
   return NextResponse.json(

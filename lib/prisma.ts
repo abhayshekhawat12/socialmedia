@@ -6,16 +6,21 @@ declare global {
 }
 
 const prismaClientSingleton = (): PrismaClient => {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl || dbUrl.trim() === "") {
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        "[Prisma Error] DATABASE_URL is not set or is empty in production environment. Please configure DATABASE_URL in your Vercel project environment variables."
-      );
-    }
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!dbUrl) {
+    console.error(
+      "[Prisma Error] DATABASE_URL is not set or is empty. Please configure DATABASE_URL and DIRECT_URL in your .env or Vercel environment variables."
+    );
   }
 
   return new PrismaClient({
+    datasources: dbUrl
+      ? {
+          db: {
+            url: dbUrl,
+          },
+        }
+      : undefined,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 };

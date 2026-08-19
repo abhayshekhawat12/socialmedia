@@ -1,7 +1,7 @@
 const DEFAULT_GATEWAYS = [
-  process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'https://gateway.pinata.cloud/ipfs/',
+  process.env.NEXT_PUBLIC_PINATA_GATEWAY || 'https://cloudflare-ipfs.com/ipfs/',
+  'https://gateway.pinata.cloud/ipfs/',
   'https://ipfs.io/ipfs/',
-  'https://cloudflare-ipfs.com/ipfs/',
   'https://dweb.link/ipfs/'
 ];
 
@@ -14,10 +14,6 @@ export function resolveIPFSUrl(cidOrUrl: string | undefined): string {
     return cidOrUrl;
   }
   const cleanCID = cidOrUrl.replace('ipfs://', '');
-  if (typeof window !== 'undefined') {
-    const cached = localStorage.getItem(`ipfs_${cleanCID}`);
-    if (cached) return cached;
-  }
   return `${DEFAULT_GATEWAYS[0]}${cleanCID}`;
 }
 
@@ -41,26 +37,22 @@ export async function uploadJSONToIPFS(jsonData: any): Promise<string> {
     const data = await res.json();
     return data.cid;
   } catch (error) {
-    console.warn('IPFS API route failed, using local hash fallback:', error);
-    // Client fallback CID generator & local storage caching
+    console.warn('IPFS API route fallback:', error);
     const str = JSON.stringify(jsonData);
     const simpleHash = 'Qm' + Array.from(str).reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) >>> 0, 0).toString(16).padStart(44, 'x');
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(`ipfs_${simpleHash}`, str);
-    }
     return simpleHash;
   }
 }
 
 /**
- * Upload Media File to IPFS via API route
+ * Upload Media File via Storage API route
  */
 export async function uploadFileToIPFS(file: File): Promise<string> {
   try {
     const formData = new FormData();
     formData.append('file', file);
 
-    const res = await fetch('/api/ipfs/upload-file', {
+    const res = await fetch('/api/storage/upload', {
       method: 'POST',
       body: formData,
     });
@@ -70,25 +62,10 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
     }
 
     const data = await res.json();
-    if (data.url && typeof window !== 'undefined') {
-      localStorage.setItem(`ipfs_${data.cid}`, data.url);
-    }
-    return data.cid;
+    return data.cid || data.url;
   } catch (error) {
-    console.warn('IPFS API file route failed, using data URL fallback:', error);
-    // Convert file to Data URL for instant rendering fallback
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        const fakeCID = 'Qm' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(`ipfs_${fakeCID}`, dataUrl);
-        }
-        resolve(fakeCID);
-      };
-      reader.readAsDataURL(file);
-    });
+    console.warn('Storage file upload error:', error);
+    throw error;
   }
 }
 
@@ -98,20 +75,6 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
 export async function fetchIPFSJSON<T>(cidOrUrl: string): Promise<T | null> {
   if (!cidOrUrl) return null;
 
-  // Check localStorage fallback first
-  const cleanCID = cidOrUrl.replace('ipfs://', '');
-  if (typeof window !== 'undefined') {
-    const cached = localStorage.getItem(`ipfs_${cleanCID}`);
-    if (cached) {
-      try {
-        return JSON.parse(cached) as T;
-      } catch (e) {
-        // If it was cached as raw string/dataURL
-      }
-    }
-  }
-
-  // Fetch from IPFS Gateway
   const targetUrl = resolveIPFSUrl(cidOrUrl);
   try {
     const res = await fetch(targetUrl);

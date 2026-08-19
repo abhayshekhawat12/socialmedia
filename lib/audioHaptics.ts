@@ -9,10 +9,8 @@ class SoundHapticService {
   private isHapticsEnabled: boolean = true;
 
   constructor() {
-    if (typeof window !== "undefined") {
-      this.isSoundEnabled = localStorage.getItem("aura_ui_sounds") !== "false";
-      this.isHapticsEnabled = localStorage.getItem("aura_ui_haptics") !== "false";
-    }
+    this.isSoundEnabled = true;
+    this.isHapticsEnabled = true;
   }
 
   private initAudio() {
@@ -29,9 +27,6 @@ class SoundHapticService {
 
   public setSoundEnabled(enabled: boolean) {
     this.isSoundEnabled = enabled;
-    if (typeof window !== "undefined") {
-      localStorage.setItem("aura_ui_sounds", enabled ? "true" : "false");
-    }
   }
 
   public getSoundEnabled(): boolean {
@@ -40,9 +35,6 @@ class SoundHapticService {
 
   public setHapticsEnabled(enabled: boolean) {
     this.isHapticsEnabled = enabled;
-    if (typeof window !== "undefined") {
-      localStorage.setItem("aura_ui_haptics", enabled ? "true" : "false");
-    }
   }
 
   public getHapticsEnabled(): boolean {
@@ -60,61 +52,50 @@ class SoundHapticService {
       const gain = this.audioCtx.createGain();
 
       osc.type = "sine";
-      osc.frequency.setValueAtTime(880, this.audioCtx.currentTime); // A5 note
-      osc.frequency.exponentialRampToValueAtTime(440, this.audioCtx.currentTime + 0.06);
+      osc.frequency.setValueAtTime(800, this.audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(400, this.audioCtx.currentTime + 0.04);
 
-      gain.gain.setValueAtTime(0.08, this.audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.06);
+      gain.gain.setValueAtTime(0.06, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.04);
 
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
 
       osc.start();
-      osc.stop(this.audioCtx.currentTime + 0.06);
-    } catch (e) {
-      // Ignore audio restriction errors
-    }
-    this.triggerHaptic(8);
+      osc.stop(this.audioCtx.currentTime + 0.04);
+    } catch (e) {}
+
+    this.triggerHaptic([10]);
   }
 
-  // 2. Crystalline Like Confirmation (Double tap / Heart)
+  // 2. Pop / Like Heart Burst
   public playLike() {
     if (!this.isSoundEnabled) return;
     try {
       this.initAudio();
       if (!this.audioCtx) return;
 
-      const now = this.audioCtx.currentTime;
-      // Chime Note 1
-      const osc1 = this.audioCtx.createOscillator();
-      const gain1 = this.audioCtx.createGain();
-      osc1.type = "triangle";
-      osc1.frequency.setValueAtTime(587.33, now); // D5
-      gain1.gain.setValueAtTime(0.12, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-      osc1.connect(gain1);
-      gain1.connect(this.audioCtx.destination);
-      osc1.start(now);
-      osc1.stop(now + 0.18);
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
 
-      // Chime Note 2 (Sparkle harmonic)
-      const osc2 = this.audioCtx.createOscillator();
-      const gain2 = this.audioCtx.createGain();
-      osc2.type = "sine";
-      osc2.frequency.setValueAtTime(880, now + 0.05); // A5
-      gain2.gain.setValueAtTime(0.14, now + 0.05);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      osc2.connect(gain2);
-      gain2.connect(this.audioCtx.destination);
-      osc2.start(now + 0.05);
-      osc2.stop(now + 0.25);
-    } catch (e) {
-      // Ignore
-    }
-    this.triggerHaptic([12, 40, 15]);
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(450, this.audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(950, this.audioCtx.currentTime + 0.08);
+
+      gain.gain.setValueAtTime(0.09, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.08);
+
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+
+      osc.start();
+      osc.stop(this.audioCtx.currentTime + 0.08);
+    } catch (e) {}
+
+    this.triggerHaptic([15, 30, 20]);
   }
 
-  // 3. Navigation Click
+  // 3. Crisp Navigation Tab Switch
   public playNav() {
     if (!this.isSoundEnabled) return;
     try {
@@ -125,62 +106,57 @@ class SoundHapticService {
       const gain = this.audioCtx.createGain();
 
       osc.type = "sine";
-      osc.frequency.setValueAtTime(520, this.audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(650, this.audioCtx.currentTime + 0.05);
+      osc.frequency.setValueAtTime(550, this.audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(750, this.audioCtx.currentTime + 0.03);
 
-      gain.gain.setValueAtTime(0.06, this.audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.05);
+      gain.gain.setValueAtTime(0.04, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.03);
 
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
 
       osc.start();
-      osc.stop(this.audioCtx.currentTime + 0.05);
-    } catch (e) {
-      // Ignore
-    }
-    this.triggerHaptic(10);
+      osc.stop(this.audioCtx.currentTime + 0.03);
+    } catch (e) {}
+
+    this.triggerHaptic([8]);
   }
 
-  // 4. Send Message / Publish Post confirmation
+  // 4. Send Message / Publish Post Whoosh
   public playSend() {
     if (!this.isSoundEnabled) return;
     try {
       this.initAudio();
       if (!this.audioCtx) return;
 
-      const now = this.audioCtx.currentTime;
       const osc = this.audioCtx.createOscillator();
       const gain = this.audioCtx.createGain();
 
       osc.type = "sine";
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(987.77, now + 0.12); // Swoosh up
+      osc.frequency.setValueAtTime(320, this.audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, this.audioCtx.currentTime + 0.12);
 
-      gain.gain.setValueAtTime(0.1, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      gain.gain.setValueAtTime(0.08, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.12);
 
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
 
-      osc.start(now);
-      osc.stop(now + 0.12);
-    } catch (e) {
-      // Ignore
-    }
-    this.triggerHaptic([15, 20, 25]);
+      osc.start();
+      osc.stop(this.audioCtx.currentTime + 0.12);
+    } catch (e) {}
+
+    this.triggerHaptic([20]);
   }
 
-  // Haptic feedback trigger
-  public triggerHaptic(pattern: number | number[]) {
+  // 5. Native Vibration Trigger (Mobile Devices)
+  private triggerHaptic(pattern: number[]) {
     if (!this.isHapticsEnabled) return;
-    if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
-      try {
-        window.navigator.vibrate(pattern);
-      } catch (e) {
-        // Ignore on unsupported browsers
+    try {
+      if (typeof window !== "undefined" && "vibrate" in navigator) {
+        navigator.vibrate(pattern);
       }
-    }
+    } catch (e) {}
   }
 }
 

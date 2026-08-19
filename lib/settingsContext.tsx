@@ -218,7 +218,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const clearCache = () => {
     setCacheSizeMB(0);
-    localStorage.removeItem("block_social_temp_cache");
   };
 
   return (

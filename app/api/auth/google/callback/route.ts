@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
     const displayName = googleUser.name || googleUser.email.split("@")[0];
     const picture = googleUser.picture || "";
 
-    // 3. Find or create user in PostgreSQL
+    // 3. Find or create user in Supabase / PostgreSQL
     let user = await prisma.user.findFirst({
       where: {
         OR: [{ googleId }, { email }],
@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
               username: finalUsername,
               displayName,
               avatarUrl: picture,
-              bio: "Aura Google Member",
+              bio: "Pulse Creator",
             },
           },
         },
@@ -123,37 +123,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Failed to establish account profile.")}`);
     }
 
-    // 4. Sign JWT session
+    // 4. Sign JWT session and set secure cookie
     const token = signAuthToken(user.id, user.walletAddress || user.id);
-    const accountIdentifier = user.walletAddress || user.id;
 
-    // Render an HTML landing bridge that populates localStorage and cookies, then redirects to /feed
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Signing in to Aura...</title>
-  <script>
-    try {
-      localStorage.setItem("block_social_jwt", ${JSON.stringify(token)});
-      localStorage.setItem("block_social_account", ${JSON.stringify(accountIdentifier)});
-      localStorage.setItem("block_social_cached_profile", ${JSON.stringify(JSON.stringify(user.profile))});
-    } catch(e) {}
-    window.location.replace("/feed");
-  </script>
-</head>
-<body style="background: #0b0f19; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
-  <p>Authenticating with Aura...</p>
-</body>
-</html>
-    `;
-
-    const response = new NextResponse(html, {
-      headers: { "Content-Type": "text/html" },
-    });
-
+    const response = NextResponse.redirect(`${origin}/feed`);
     response.cookies.set("block_social_jwt", token, {
-      httpOnly: true,
+      httpOnly: false, // Accessible to client & server
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 30 * 24 * 60 * 60,

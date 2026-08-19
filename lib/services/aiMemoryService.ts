@@ -7,38 +7,30 @@ export interface MemoryEntry {
   sourceMsgId?: string;
 }
 
-const memoryStore: MemoryEntry[] = [
-  {
-    id: "mem_1",
-    contactName: "Rahul Sharma",
-    topic: "Mobile App Performance",
-    summary: "You discussed mobile responsiveness, image caching optimizations, and fast video loading on Aura.",
-    date: "Last week",
-  },
-  {
-    id: "mem_2",
-    contactName: "Sarah Jenkins",
-    topic: "Design System & Dark Mode",
-    summary: "Discussed frosted glass aesthetics, smooth spring animations, and cohesive typography for creator profiles.",
-    date: "3 days ago",
-  },
-  {
-    id: "mem_3",
-    contactName: "Elena Rostova",
-    topic: "Short Video Storytelling",
-    summary: "Exchanged creative tips on audio overlays, cinematic portrait filters, and trending audio discovery in Pulse.",
-    date: "Yesterday",
-  },
-];
-
 export const aiMemoryService = {
   getMemories(): MemoryEntry[] {
-    return [...memoryStore];
+    return [
+      {
+        id: "mem_1",
+        contactName: "Active Connections",
+        topic: "Mobile Performance & Media",
+        summary: "Conversations on video loading, responsive layout, and glass design.",
+        date: "Recent",
+      },
+      {
+        id: "mem_2",
+        contactName: "Creative Network",
+        topic: "Audio & Visual Storytelling",
+        summary: "Creative discussions on Pulse reels, music tracks, and creator marketplace.",
+        date: "Recent",
+      },
+    ];
   },
 
   searchMemory(query: string): MemoryEntry[] {
     const q = query.toLowerCase();
-    return memoryStore.filter(
+    const memories = this.getMemories();
+    return memories.filter(
       (m) =>
         m.topic.toLowerCase().includes(q) ||
         m.summary.toLowerCase().includes(q) ||
@@ -47,20 +39,17 @@ export const aiMemoryService = {
   },
 
   deleteMemory(id: string) {
-    const idx = memoryStore.findIndex((m) => m.id === id);
-    if (idx !== -1) {
-      memoryStore.splice(idx, 1);
-    }
+    // No-op for runtime
   },
 
   queryAiMemory(userQuestion: string): string {
     const q = userQuestion.toLowerCase();
-    if (q.includes("rahul") || q.includes("performance")) {
-      return '🧠 AI Memory Result:\n"You discussed mobile responsiveness, image caching, and fast media loading on Aura with Rahul Sharma last week."';
+    if (q.includes("performance") || q.includes("speed")) {
+      return '🧠 AI Assistant Summary:\n"Your conversations highlight high-performance media loading, glassmorphism UI, and low-latency realtime messaging on Pulse."';
     }
-    if (q.includes("design") || q.includes("sarah")) {
-      return '🧠 AI Memory Result:\n"You discussed frosted glass aesthetics, smooth animations, and typography with Sarah Jenkins 3 days ago."';
+    if (q.includes("design") || q.includes("ui")) {
+      return '🧠 AI Assistant Summary:\n"You have active discussions focusing on frosted glass aesthetics, smooth spring animations, and Apple 2026 design tokens."';
     }
-    return `🧠 AI Memory Result:\n"Based on your private conversation memories, you have stored topic summaries matching your query."`;
+    return `🧠 AI Assistant Summary:\n"Based on your private conversation memories, your discussions center on creative collaboration, reels production, and creator deals."`;
   },
 };

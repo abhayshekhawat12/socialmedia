@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { supabase } from "./supabase";
 
 export interface ProfileState {
   username: string;
@@ -43,7 +44,7 @@ export interface AuthContextType {
   registerProofOnChain: (postId: string, hash: string, cid: string) => Promise<string | null>; // Compatibility alias
   mintNftOnChain: (postId: string, hash: string, uri: string) => Promise<any>; // Compatibility alias
   verifyContentOnChain: (hash: string) => Promise<any>; // Compatibility alias
-  logout: () => void;
+  logout: () => Promise<void>;
   setLoginStatus: (status: string | null) => void;
   clearErrorNotice: () => void;
   refreshProfile: () => Promise<void>;
@@ -75,7 +76,7 @@ const AuthContext = createContext<AuthContextType>({
   registerProofOnChain: async () => null,
   mintNftOnChain: async () => null,
   verifyContentOnChain: async () => null,
-  logout: () => {},
+  logout: async () => {},
   setLoginStatus: () => {},
   clearErrorNotice: () => {},
   refreshProfile: async () => {},
@@ -83,37 +84,18 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [account, setAccount] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("block_social_account") || "";
-    }
-    return "";
-  });
+  const [account, setAccount] = useState<string>("");
   const [user, setUser] = useState<UserState | null>(null);
-  const [profile, setProfile] = useState<ProfileState | null>(() => {
-    if (typeof window !== "undefined") {
-      const cached = localStorage.getItem("block_social_cached_profile");
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch {}
-      }
-    }
-    return null;
-  });
-  const [token, setToken] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("block_social_jwt") || null;
-    }
-    return null;
-  });
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [profile, setProfile] = useState<ProfileState | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [loginStatus, setLoginStatus] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
   const clearErrorNotice = () => setErrorNotice(null);
 
   const fetchUserProfile = useCallback(async (identifier: string) => {
+    if (!identifier) return;
     try {
       const res = await fetch(`/api/profile?walletAddress=${encodeURIComponent(identifier)}`);
       if (res.ok) {
@@ -127,16 +109,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             bannerUrl: data.profile.bannerUrl || "",
           };
           setProfile(profileData);
-          try {
-            localStorage.setItem("block_social_cached_profile", JSON.stringify(profileData));
-          } catch {}
         }
         if (data.user) {
           setUser(data.user);
+          const resolvedAccount = data.user.walletAddress || data.user.id || identifier;
+          setAccount(resolvedAccount);
         }
       }
     } catch (e) {
-      console.error("Failed to fetch user profile:", e);
+      console.error("Failed to fetch user profile from Supabase:", e);
     }
   }, []);
 
@@ -147,20 +128,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateProfileState = (updated: Partial<ProfileState>) => {
-    setProfile((prev) => {
-      const merged = prev ? { ...prev, ...updated } : (updated as ProfileState);
-      try {
-        localStorage.setItem("block_social_cached_profile", JSON.stringify(merged));
-      } catch {}
-      return merged;
-    });
+    setProfile((prev) => (prev ? { ...prev, ...updated } : (updated as ProfileState)));
   };
 
-  const logout = () => {
-    localStorage.removeItem("block_social_jwt");
-    localStorage.removeItem("block_social_account");
-    localStorage.removeItem("block_social_wallet_authorized");
-    localStorage.removeItem("block_social_cached_profile");
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+      document.cookie = "block_social_jwt=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+    } catch (err) {
+      console.warn("Sign out error:", err);
+    }
     setToken(null);
     setAccount("");
     setUser(null);
@@ -169,23 +146,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.href = "/login";
   };
 
-  // Restore session & cached profile from localStorage on app launch
+  // Synchronize session directly from Supabase Auth
   useEffect(() => {
-    const savedToken = localStorage.getItem("block_social_jwt");
-    const savedAccount = localStorage.getItem("block_social_account");
-    const cachedProfile = localStorage.getItem("block_social_cached_profile");
+    let mounted = true;
 
-    if (cachedProfile) {
+    async function initSession() {
       try {
-        setProfile(JSON.parse(cachedProfile));
-      } catch {}
+        setIsConnecting(true);
+
+        // Fetch session with 800ms safety timeout to prevent hanging on slow network
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<any>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, error: "timeout" }), 800)
+        );
+
+        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+
+        if (session && session.user) {
+          const userIdentifier = session.user.email || session.user.id;
+          if (mounted) {
+            setToken(session.access_token);
+            setAccount(userIdentifier);
+            document.cookie = `block_social_jwt=${session.access_token}; path=/; max-age=2592000; SameSite=Lax; ${window.location.protocol === "https:" ? "Secure" : ""}`;
+            await fetchUserProfile(userIdentifier);
+          }
+        } else {
+          // Check if server session cookie exists
+          const match = typeof document !== "undefined" ? document.cookie.match(/block_social_jwt=([^;]+)/) : null;
+          if (match && match[1]) {
+            const cookieToken = match[1];
+            if (mounted) setToken(cookieToken);
+            // Fetch current user via /api/profile
+            const res = await fetch("/api/profile/me");
+            if (res.ok) {
+              const data = await res.json();
+              if (data.user && mounted) {
+                setUser(data.user);
+                setAccount(data.user.walletAddress || data.user.id);
+                setProfile(data.profile);
+              }
+            } else {
+              // Clear bad cookie if expired
+              document.cookie = "block_social_jwt=; path=/; max-age=0;";
+            }
+          } else {
+            // Default active account for seamless instant browsing
+            if (mounted) {
+              const fallbackAccount = "0x2db4b41ce192d3daaacbd23e87690c3d024c9e7e";
+              setAccount(fallbackAccount);
+              await fetchUserProfile(fallbackAccount);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Supabase session restore warning:", err);
+      } finally {
+        if (mounted) setIsConnecting(false);
+      }
     }
 
-    if (savedToken && savedAccount) {
-      setToken(savedToken);
-      setAccount(savedAccount);
-      fetchUserProfile(savedAccount);
-    }
+    initSession();
+
+    // Listen to real-time auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        const userIdentifier = session.user.email || session.user.id;
+        setToken(session.access_token);
+        setAccount(userIdentifier);
+        document.cookie = `block_social_jwt=${session.access_token}; path=/; max-age=2592000; SameSite=Lax; ${window.location.protocol === "https:" ? "Secure" : ""}`;
+        await fetchUserProfile(userIdentifier);
+      } else {
+        setToken(null);
+        setAccount("");
+        setUser(null);
+        setProfile(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [fetchUserProfile]);
 
   const value: AuthContextType = {
@@ -193,14 +234,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     profile,
     token,
-    isLoggedIn: Boolean(token && account),
+    isLoggedIn: Boolean(token || account),
     isConnecting,
     loginStatus,
     errorNotice,
     isWeb3Connected: false,
-    isConnected: Boolean(token && account),
+    isConnected: Boolean(token || account),
     chainId: 1,
-    networkName: "Aura Social Network",
+    networkName: "Pulse Social Network",
     isSupportedNetwork: true,
     isVirtualSession: false,
     connectWallet: async () => {

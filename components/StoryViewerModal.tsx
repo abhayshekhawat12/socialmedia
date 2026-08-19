@@ -38,7 +38,7 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   onClose,
   onStoryDeleted,
 }) => {
-  const { account } = useAuth();
+  const { account, token } = useAuth();
   const [groupIndex, setGroupIndex] = useState(initialGroupIndex);
   const [storyIndex, setStoryIndex] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -162,13 +162,12 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
 
     try {
       audioHaptics.playSend();
-      const savedToken = typeof window !== 'undefined' ? localStorage.getItem("block_social_jwt") : null;
 
       const chatRes = await fetch("/api/chats", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(savedToken ? { "Authorization": `Bearer ${savedToken}` } : {})
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ targetAddress: activeGroup.authorAddress })
       });
@@ -182,7 +181,7 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(savedToken ? { "Authorization": `Bearer ${savedToken}` } : {})
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           conversationId,

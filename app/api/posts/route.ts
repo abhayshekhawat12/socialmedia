@@ -11,7 +11,28 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20", 10);
 
     const where: any = {};
-    if (authorAddress) where.authorAddress = authorAddress;
+    if (authorAddress) {
+      // Allow searching by walletAddress or user ID or email
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { walletAddress: authorAddress },
+            { id: authorAddress },
+            { email: authorAddress },
+          ],
+        },
+      });
+
+      if (user) {
+        where.OR = [
+          { authorAddress: user.walletAddress || "" },
+          { authorAddress: user.id },
+          { authorAddress },
+        ];
+      } else {
+        where.authorAddress = authorAddress;
+      }
+    }
 
     const posts = await prisma.post.findMany({
       where,
@@ -26,7 +47,7 @@ export async function GET(req: NextRequest) {
           select: { userAddress: true },
         },
         comments: {
-          take: 6,
+          take: 10,
           orderBy: { createdAt: "desc" },
           select: {
             id: true,
@@ -41,44 +62,76 @@ export async function GET(req: NextRequest) {
     const hasMore = posts.length > limit;
     const paginatedPosts = hasMore ? posts.slice(0, limit) : posts;
 
-    // Populate profiles for all authors efficiently
-    const authorAddresses = Array.from(new Set(paginatedPosts.map((p) => p.authorAddress)));
-    const profiles = authorAddresses.length > 0
+    // Collect all author addresses from posts & comments
+    const authorIdentifiers = Array.from(
+      new Set([
+        ...paginatedPosts.map((p) => p.authorAddress.toLowerCase()),
+        ...paginatedPosts.flatMap((p) => p.comments.map((c) => c.authorAddress.toLowerCase())),
+      ])
+    );
+
+    // Fetch user profiles for all matching identifiers (walletAddress, id, email)
+    const profiles = authorIdentifiers.length > 0
       ? await prisma.profile.findMany({
           where: {
-            user: {
-              walletAddress: { in: authorAddresses },
-            },
+            OR: [
+              { user: { walletAddress: { in: authorIdentifiers } } },
+              { user: { id: { in: authorIdentifiers } } },
+              { user: { email: { in: authorIdentifiers } } },
+            ],
           },
           select: {
             username: true,
             displayName: true,
             avatarUrl: true,
-            user: { select: { walletAddress: true } },
+            user: { select: { walletAddress: true, id: true, email: true } },
           },
         })
       : [];
 
-    const profileMap = new Map(profiles.map((p) => [p.user.walletAddress, p]));
+    const profileMap = new Map<string, any>();
+    for (const p of profiles) {
+      if (p.user.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+      if (p.user.id) profileMap.set(p.user.id.toLowerCase(), p);
+      if (p.user.email) profileMap.set(p.user.email.toLowerCase(), p);
+    }
 
-    const enrichedPosts = paginatedPosts.map((post) => ({
-      ...post,
-      authorProfile: profileMap.get(post.authorAddress) || {
-        username: `user_${post.authorAddress.slice(0, 8)}`,
-        displayName: `Creator ${post.authorAddress.slice(0, 6)}`,
-        avatarUrl: "",
-      },
-    }));
+    const enrichedPosts = paginatedPosts.map((post) => {
+      const authorKey = post.authorAddress.toLowerCase();
+      const authorProf = profileMap.get(authorKey);
+
+      return {
+        ...post,
+        authorProfile: authorProf || {
+          username: `user_${authorKey.slice(0, 8)}`,
+          displayName: `Creator ${authorKey.slice(0, 6)}`,
+          avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${authorKey}`,
+        },
+        comments: post.comments.map((c) => {
+          const commentAuthorKey = c.authorAddress.toLowerCase();
+          const commentProf = profileMap.get(commentAuthorKey);
+          return {
+            ...c,
+            authorProfile: commentProf || {
+              username: `user_${commentAuthorKey.slice(0, 8)}`,
+              displayName: `User ${commentAuthorKey.slice(0, 6)}`,
+              avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${commentAuthorKey}`,
+            },
+          };
+        }),
+      };
+    });
 
     return NextResponse.json(
       { success: true, posts: enrichedPosts, hasMore, page },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
+          "Cache-Control": "no-store, max-age=0",
         },
       }
     );
   } catch (error: any) {
+    console.error("Error fetching posts:", error);
     return NextResponse.json({ error: error.message || "Failed to fetch posts" }, { status: 500 });
   }
 }
@@ -103,9 +156,15 @@ export async function POST(req: NextRequest) {
 
     const normalizedAuthor = authorAddress.toLowerCase();
 
-    // Ensure user exists
-    let user = await prisma.user.findUnique({
-      where: { walletAddress: normalizedAuthor },
+    // Ensure user exists (check by walletAddress, id, or email)
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { walletAddress: normalizedAuthor },
+          { id: normalizedAuthor },
+          { email: normalizedAuthor },
+        ],
+      },
       include: { profile: true },
     });
 
@@ -124,11 +183,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create post
+    // Unify authorAddress with the user's primary walletAddress or id
+    const finalAuthorAddress = user.walletAddress || user.id || normalizedAuthor;
+
+    // Create post in database
     const post = await prisma.post.create({
       data: {
         ...(id && { id }),
-        authorAddress: normalizedAuthor,
+        authorAddress: finalAuthorAddress,
         caption,
         mediaUrl: mediaUrl || (mediaCid ? `/uploads/${mediaCid}` : ""),
         mediaCid,
@@ -144,11 +206,15 @@ export async function POST(req: NextRequest) {
       if (hashtags) {
         for (const tagRaw of hashtags) {
           const tag = tagRaw.toLowerCase();
-          await prisma.hashtag.upsert({
-            where: { tag },
-            create: { tag, postCount: 1 },
-            update: { postCount: { increment: 1 } },
-          });
+          try {
+            await prisma.hashtag.upsert({
+              where: { tag },
+              create: { tag, postCount: 1 },
+              update: { postCount: { increment: 1 } },
+            });
+          } catch (e) {
+            console.warn("Hashtag upsert error:", e);
+          }
         }
       }
     }
@@ -161,6 +227,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: any) {
+    console.error("Error creating post:", error);
     return NextResponse.json({ error: error.message || "Failed to create post" }, { status: 500 });
   }
 }
