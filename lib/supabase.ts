@@ -3,10 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pgphohpuwylnnrbwwclu.supabase.co";
 const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBncGhvaHB1d3lsbm5yYnd3Y2x1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjQwMzk1NzEsImV4cCI6MjAzOTYxNTU3MX0.mock_or_env";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+// Create Supabase client — if anon key is empty, the client will only work for
+// non-authenticated operations. The primary auth flow uses Direct Google OAuth
+// via /api/auth/google/callback which doesn't need Supabase Auth SDK.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey || "placeholder", {
   auth: {
     autoRefreshToken: true,
     persistSession: true,

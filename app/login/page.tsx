@@ -659,20 +659,6 @@ function LoginForm() {
                   />
                   <span>Continue with Google</span>
                 </button>
-
-                {/* Mobile / OTP Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    audioHaptics.playTap();
-                    resetMessages();
-                    setAuthMode("mobile_phone");
-                  }}
-                  className="w-full h-13 rounded-2xl glass-pill hover:bg-white/90 dark:hover:bg-slate-800/90 text-slate-800 dark:text-slate-100 font-bold text-xs flex items-center justify-center gap-2.5 transition btn-tactile cursor-pointer border border-white/80 dark:border-white/10 shadow-sm"
-                >
-                  <Smartphone className="w-4 h-4 text-[#00B7FF]" />
-                  <span>Continue with Mobile / OTP</span>
-                </button>
               </div>
 
               {/* Bottom Toggle Sign In / Sign Up */}

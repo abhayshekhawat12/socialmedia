@@ -215,12 +215,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               document.cookie = "block_social_jwt=; path=/; max-age=0;";
             }
           } else {
-            // Default active account for seamless instant browsing
-            if (mounted) {
-              const fallbackAccount = "0x2db4b41ce192d3daaacbd23e87690c3d024c9e7e";
-              setAccount(fallbackAccount);
-              await fetchUserProfile(fallbackAccount);
-            }
+            // No session and no cookie — user is not authenticated
+            // Do NOT set a fallback account to avoid unnecessary DB calls
           }
         }
       } catch (err) {
