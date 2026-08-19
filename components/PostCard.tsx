@@ -339,38 +339,36 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
 
       {/* 2. Visual Media Centerpiece with Glass Action Badges */}
       <div
-        className="w-full aspect-square bg-slate-950/20 relative overflow-hidden flex items-center justify-center cursor-pointer select-none rounded-[24px] mx-auto px-1 sm:px-2"
+        className="w-full aspect-square bg-slate-950/10 dark:bg-slate-950/40 relative overflow-hidden flex items-center justify-center cursor-pointer select-none"
         onDoubleClick={handleDoubleTap}
       >
-        <div className="w-full h-full rounded-[22px] overflow-hidden relative">
-          {post.mediaType === "video" ? (
-            <video
-              src={resolveMediaUrl(post.mediaUrl, post.mediaCid)}
-              controls
-              playsInline
-              preload="metadata"
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <img
-              src={resolveMediaUrl(post.mediaUrl, post.mediaCid)}
-              alt={post.caption || "Post content"}
-              onError={(e) => handleImageFallback(e, "post")}
-              className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]"
-              loading="lazy"
-              decoding="async"
-            />
-          )}
+        {post.mediaType === "video" ? (
+          <video
+            src={resolveMediaUrl(post.mediaUrl, post.mediaCid)}
+            controls
+            playsInline
+            preload="metadata"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <img
+            src={resolveMediaUrl(post.mediaUrl, post.mediaCid)}
+            alt={post.caption || "Post content"}
+            onError={(e) => handleImageFallback(e, "post")}
+            className="w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]"
+            loading="lazy"
+            decoding="async"
+          />
+        )}
 
-          {/* Double-tap heart animation */}
-          {showHeartBurst && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-              <div className="animate-heart-pop">
-                <Heart className="w-24 h-24 text-[#F45AA8] fill-current drop-shadow-2xl" />
-              </div>
+        {/* Double-tap heart animation */}
+        {showHeartBurst && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+            <div className="animate-heart-pop">
+              <Heart className="w-24 h-24 text-[#F45AA8] fill-current drop-shadow-2xl" />
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* 3. Floating Interaction Buttons */}

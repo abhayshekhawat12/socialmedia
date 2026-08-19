@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -141,20 +142,24 @@ export async function POST(req: NextRequest) {
       const newUserId = crypto.randomUUID();
       const { data: newUser } = await supabaseServer
         .from("User")
-        .insert({
-          id: newUserId,
-          walletAddress: normalizedAuthor,
-        })
+        .insert(
+          withTimestamps({
+            id: newUserId,
+            walletAddress: normalizedAuthor,
+          })
+        )
         .select()
         .single();
 
       if (newUser) {
         user = newUser;
-        await supabaseServer.from("Profile").insert({
-          userId: newUser.id,
-          username: `user_${normalizedAuthor.slice(0, 8)}`,
-          displayName: `User ${normalizedAuthor.slice(0, 6)}`,
-        });
+        await supabaseServer.from("Profile").insert(
+          withTimestamps({
+            userId: newUser.id,
+            username: `user_${normalizedAuthor.slice(0, 8)}`,
+            displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+          })
+        );
       }
     }
 
@@ -163,25 +168,27 @@ export async function POST(req: NextRequest) {
 
     const { data: newPulse, error: pulseErr } = await supabaseServer
       .from("Pulse")
-      .insert({
-        authorAddress: finalAuthorAddress,
-        videoUrl,
-        videoCid,
-        thumbnailUrl: thumbnailUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80",
-        caption,
-        hashtags: hashtags || "#Pulse #Trending",
-        category: category || "General",
-        audioTitle: audioTitle || "Original Sound",
-        audioId: audioId || null,
-        filterName: filterName || "",
-        privacy: privacy || "Everyone",
-        allowComments: allowComments ?? true,
-        allowRemix: allowRemix ?? true,
-        allowDownload: allowDownload ?? true,
-        remixOfId: remixOfId || null,
-        pulseScore,
-        authenticScore: 96,
-      })
+      .insert(
+        withTimestamps({
+          authorAddress: finalAuthorAddress,
+          videoUrl,
+          videoCid: videoCid || "",
+          thumbnailUrl: thumbnailUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80",
+          caption,
+          hashtags: hashtags || "#Pulse #Trending",
+          category: category || "General",
+          audioTitle: audioTitle || "Original Sound",
+          audioId: audioId || null,
+          filterName: filterName || "",
+          privacy: privacy || "Everyone",
+          allowComments: allowComments ?? true,
+          allowRemix: allowRemix ?? true,
+          allowDownload: allowDownload ?? true,
+          remixOfId: remixOfId || null,
+          pulseScore,
+          authenticScore: 96,
+        })
+      )
       .select()
       .single();
 
@@ -214,7 +221,7 @@ export async function PUT(req: NextRequest) {
       const currentCount = pulse?.likeCount || 0;
       const { data: updated } = await supabaseServer
         .from("Pulse")
-        .update({ likeCount: currentCount + 1 })
+        .update({ likeCount: currentCount + 1, updatedAt: new Date().toISOString() })
         .eq("id", pulseId)
         .select()
         .single();
@@ -223,11 +230,13 @@ export async function PUT(req: NextRequest) {
 
     if (action === "save") {
       if (userAddress) {
-        await supabaseServer.from("SavedPulse").upsert({
-          userAddress: userAddress.toLowerCase(),
-          pulseId,
-          folder: folder || "Favorites",
-        });
+        await supabaseServer.from("SavedPulse").upsert(
+          withTimestamps({
+            userAddress: userAddress.toLowerCase(),
+            pulseId,
+            folder: folder || "Favorites",
+          })
+        );
       }
       const { data: pulse } = await supabaseServer
         .from("Pulse")
@@ -237,7 +246,7 @@ export async function PUT(req: NextRequest) {
       const currentCount = pulse?.saveCount || 0;
       const { data: updated } = await supabaseServer
         .from("Pulse")
-        .update({ saveCount: currentCount + 1 })
+        .update({ saveCount: currentCount + 1, updatedAt: new Date().toISOString() })
         .eq("id", pulseId)
         .select()
         .single();
@@ -253,7 +262,7 @@ export async function PUT(req: NextRequest) {
       const currentCount = pulse?.shareCount || 0;
       const { data: updated } = await supabaseServer
         .from("Pulse")
-        .update({ shareCount: currentCount + 1 })
+        .update({ shareCount: currentCount + 1, updatedAt: new Date().toISOString() })
         .eq("id", pulseId)
         .select()
         .single();

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -141,10 +142,12 @@ export async function POST(req: NextRequest) {
       const newUserId = crypto.randomUUID();
       const { data: newUser } = await supabaseServer
         .from("User")
-        .insert({
-          id: newUserId,
-          walletAddress: normalizedAuthor,
-        })
+        .insert(
+          withTimestamps({
+            id: newUserId,
+            walletAddress: normalizedAuthor,
+          })
+        )
         .select()
         .single();
 
@@ -152,11 +155,13 @@ export async function POST(req: NextRequest) {
         user = newUser;
         const { data: newProfile } = await supabaseServer
           .from("Profile")
-          .insert({
-            userId: newUser.id,
-            username: `user_${normalizedAuthor.slice(0, 8)}`,
-            displayName: `User ${normalizedAuthor.slice(0, 6)}`,
-          })
+          .insert(
+            withTimestamps({
+              userId: newUser.id,
+              username: `user_${normalizedAuthor.slice(0, 8)}`,
+              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+            })
+          )
           .select()
           .single();
         profile = newProfile;
@@ -165,24 +170,27 @@ export async function POST(req: NextRequest) {
 
     const finalAuthorAddress = user?.walletAddress || user?.id || normalizedAuthor;
 
-    // Create post in Supabase
+    // Create post in Supabase with guaranteed UUID and timestamps!
     const { data: post, error: postErr } = await supabaseServer
       .from("Post")
-      .insert({
-        ...(id && { id }),
-        authorAddress: finalAuthorAddress,
-        caption,
-        mediaUrl: mediaUrl || (mediaCid ? `/uploads/${mediaCid}` : ""),
-        mediaCid,
-        mediaType,
-        location,
-        privacy,
-      })
+      .insert(
+        withTimestamps({
+          ...(id ? { id } : {}),
+          authorAddress: finalAuthorAddress,
+          caption,
+          mediaUrl: mediaUrl || (mediaCid ? `/uploads/${mediaCid}` : ""),
+          mediaCid: mediaCid || "",
+          mediaType: mediaType || "image",
+          location: location || "",
+          privacy: privacy || "public",
+        })
+      )
       .select()
       .single();
 
     if (postErr || !post) {
-      throw new Error(postErr?.message || "Failed to create post");
+      console.error("Supabase post insert error:", postErr);
+      throw new Error(postErr?.message || "Failed to create post in database");
     }
 
     return NextResponse.json({
