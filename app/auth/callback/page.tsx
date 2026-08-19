@@ -6,79 +6,83 @@ import { supabase } from "@/lib/supabase";
 import { Loader2, AlertCircle, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
+function decodeJwtPayload(token: string): any {
+  try {
+    const base64Url = token.split(".")[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
 function CallbackHandler() {
   const router = useRouter();
-  const [status, setStatus] = useState("Verifying Google credentials...");
+  const [status, setStatus] = useState("Verifying credentials...");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     let authProcessed = false;
 
-    async function processUser(user: any) {
+    async function syncBackendUser(userData: {
+      supabaseId?: string;
+      email?: string;
+      name?: string;
+      picture?: string;
+      googleId?: string;
+      token?: string;
+    }) {
       if (authProcessed) return;
       authProcessed = true;
 
-      if (isMounted) setStatus("Connecting account and setting up profile...");
-
-      const email = user.email || "";
-      const name =
-        user.user_metadata?.full_name ||
-        user.user_metadata?.name ||
-        user.email?.split("@")[0] ||
-        "Aura Member";
-      const picture =
-        user.user_metadata?.avatar_url ||
-        user.user_metadata?.picture ||
-        `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email || user.id)}`;
-      const googleId =
-        user.identities?.find((i: any) => i.provider === "google")?.id ||
-        user.user_metadata?.provider_id ||
-        user.user_metadata?.sub ||
-        user.id;
+      if (isMounted) setStatus("Creating user profile and setting up session...");
 
       try {
         const res = await fetch("/api/auth/google", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email,
-            name,
-            picture,
-            googleId,
-            supabaseId: user.id,
-          }),
+          body: JSON.stringify(userData),
         });
 
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || "Failed to link user profile to database.");
+          throw new Error(data.error || "Failed to register account profile.");
         }
 
-        // Store session cookie for server components & authContext
-        try {
+        const sessionToken = data.token || userData.token;
+        if (sessionToken) {
           const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
-          document.cookie = `block_social_jwt=${data.token}; path=/; max-age=2592000; SameSite=Lax; ${isHttps ? "Secure" : ""}`;
-        } catch {}
+          document.cookie = `block_social_jwt=${sessionToken}; path=/; max-age=2592000; SameSite=Lax; ${isHttps ? "Secure" : ""}`;
+        }
 
-        if (isMounted) setStatus("Authentication successful! Redirecting to feed...");
+        if (isMounted) setStatus("Welcome to Pulse! Redirecting...");
         setTimeout(() => {
           window.location.replace("/feed");
-        }, 250);
-      } catch (postErr: any) {
-        console.error("Backend auth sync error:", postErr);
+        }, 150);
+      } catch (err: any) {
+        console.error("Backend auth sync error:", err);
         if (isMounted) {
-          setError(postErr.message || "Failed to establish session on backend server.");
+          setError(err.message || "Failed to finalize user registration.");
         }
       }
     }
 
     async function handleAuth() {
       try {
-        // 1. Check URL parameters for OAuth errors
-        const searchParams = new URLSearchParams(window.location.search);
-        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const hash = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
+        const search = typeof window !== "undefined" ? window.location.search : "";
 
+        const hashParams = new URLSearchParams(hash);
+        const searchParams = new URLSearchParams(search);
+
+        // 1. Check for URL errors from OAuth provider
         const urlError =
           searchParams.get("error_description") ||
           searchParams.get("error") ||
@@ -89,57 +93,104 @@ function CallbackHandler() {
           throw new Error(decodeURIComponent(urlError));
         }
 
-        // 2. Check for PKCE Authorization Code
+        // 2. Immediate Hash Token extraction (Implicit Flow) - 0ms execution
+        const hashAccessToken = hashParams.get("access_token");
+        const hashRefreshToken = hashParams.get("refresh_token");
+
+        if (hashAccessToken) {
+          const payload = decodeJwtPayload(hashAccessToken);
+          if (payload) {
+            const userMeta = payload.user_metadata || {};
+            await syncBackendUser({
+              supabaseId: payload.sub,
+              email: payload.email,
+              name: userMeta.full_name || userMeta.name || payload.email?.split("@")[0] || "Pulse Member",
+              picture: userMeta.avatar_url || userMeta.picture || "",
+              googleId: payload.sub,
+              token: hashAccessToken,
+            });
+
+            if (hashRefreshToken) {
+              supabase.auth.setSession({
+                access_token: hashAccessToken,
+                refresh_token: hashRefreshToken,
+              }).catch(() => {});
+            }
+            return;
+          }
+        }
+
+        // 3. PKCE Authorization Code Exchange
         const code = searchParams.get("code");
         if (code) {
-          setStatus("Exchanging authorization code with Supabase...");
+          setStatus("Exchanging authorization code...");
           try {
-            const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-            if (exchangeError) {
-              console.warn("PKCE code exchange notice:", exchangeError.message);
-            } else if (data?.session?.user) {
-              await processUser(data.session.user);
+            const { data, error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
+            if (!exchangeErr && data?.session?.user) {
+              const u = data.session.user;
+              await syncBackendUser({
+                supabaseId: u.id,
+                email: u.email,
+                name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split("@")[0] || "Pulse Member",
+                picture: u.user_metadata?.avatar_url || u.user_metadata?.picture || "",
+                googleId: u.id,
+                token: data.session.access_token,
+              });
               return;
             }
           } catch (codeErr) {
-            console.warn("Code exchange attempt:", codeErr);
+            console.warn("PKCE exchange notice:", codeErr);
           }
         }
 
-        // 3. Check for existing Supabase session (e.g. from Hash tokens)
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) {
-          console.warn("Session check notice:", sessionError.message);
-        }
-
+        // 4. Check existing session
+        const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          await processUser(session.user);
+          const u = session.user;
+          await syncBackendUser({
+            supabaseId: u.id,
+            email: u.email,
+            name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split("@")[0] || "Pulse Member",
+            picture: u.user_metadata?.avatar_url || u.user_metadata?.picture || "",
+            googleId: u.id,
+            token: session.access_token,
+          });
           return;
         }
 
-        // 4. Listen for auth state change
+        // 5. Realtime Auth State Listener
         const { data: authListener } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
           if (currentSession?.user && !authProcessed) {
-            await processUser(currentSession.user);
+            const u = currentSession.user;
+            await syncBackendUser({
+              supabaseId: u.id,
+              email: u.email,
+              name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split("@")[0] || "Pulse Member",
+              picture: u.user_metadata?.avatar_url || u.user_metadata?.picture || "",
+              googleId: u.id,
+              token: currentSession.access_token,
+            });
           }
         });
 
-        // 5. Safety timeout to prevent infinite hanging
+        // 6. Safety fallback redirect to login if no auth params present
         setTimeout(() => {
           if (!authProcessed && isMounted) {
-            setError(
-              "Authentication timed out. The session could not be verified automatically."
-            );
+            if (!hashAccessToken && !code) {
+              window.location.replace("/login");
+            } else {
+              setError("Authentication verification timed out. Please try signing in again.");
+            }
           }
-        }, 8000);
+        }, 6000);
 
         return () => {
           authListener.subscription.unsubscribe();
         };
       } catch (err: any) {
-        console.error("Supabase Google Auth Callback error:", err);
+        console.error("Auth callback exception:", err);
         if (isMounted) {
-          setError(err.message || "Failed to complete Google authentication.");
+          setError(err.message || "Failed to complete authentication.");
         }
       }
     }
@@ -175,7 +226,7 @@ function CallbackHandler() {
         ) : (
           <div className="space-y-4">
             <Loader2 className="w-10 h-10 text-cyan-400 animate-spin mx-auto" />
-            <h2 className="text-xl font-bold text-white tracking-wide">Google Sign-In</h2>
+            <h2 className="text-xl font-bold text-white tracking-wide">Signing You In</h2>
             <p className="text-sm text-slate-300">{status}</p>
           </div>
         )}
