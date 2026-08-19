@@ -1,80 +1,111 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { verifyAuthToken } from "@/lib/auth";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
 
-// GET: Fetch IDs of stories viewed by the current user
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const { searchParams } = new URL(req.url);
+    const storyId = searchParams.get("storyId");
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    if (!storyId) {
+      return NextResponse.json({ error: "Story ID required" }, { status: 400 });
     }
 
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
+    const { data: views, error } = await supabaseServer
+      .from("StoryView")
+      .select("*")
+      .eq("storyId", storyId)
+      .order("viewedAt", { ascending: false });
+
+    if (error) {
+      return NextResponse.json({ success: true, count: 0, viewers: [] });
     }
 
-    const userAddress = session.walletAddress.toLowerCase();
+    const viewList = views || [];
+    const viewerAddresses = Array.from(new Set(viewList.map((v) => (v.viewerAddress || "").toLowerCase()))).filter(Boolean);
 
-    const views = await prisma.storyView.findMany({
-      where: { viewerAddress: userAddress }
+    let profiles: any[] = [];
+    if (viewerAddresses.length > 0) {
+      const { data: profileData } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profileData || [];
+    }
+
+    const profileMap = new Map<string, any>();
+    for (const p of profiles) {
+      if (p.user) {
+        if (p.user.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+        if (p.user.id) profileMap.set(p.user.id.toLowerCase(), p);
+      }
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
+    }
+
+    const enrichedViewers = viewList.map((v) => {
+      const viewerKey = (v.viewerAddress || "").toLowerCase();
+      const profile = profileMap.get(viewerKey);
+      return {
+        viewerAddress: v.viewerAddress,
+        viewedAt: v.viewedAt || v.createdAt,
+        username: profile?.username || `user_${viewerKey.slice(0, 8)}`,
+        displayName: profile?.displayName || `User ${viewerKey.slice(0, 6)}`,
+        avatarUrl: profile?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${viewerKey}`,
+      };
     });
 
-    const viewedStoryIds = views.map(v => v.storyId);
-    return NextResponse.json({ success: true, viewedStoryIds });
+    return NextResponse.json({
+      success: true,
+      count: viewList.length,
+      viewers: enrichedViewers,
+    });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Failed to fetch views" }, { status: 500 });
+    return NextResponse.json({ success: true, count: 0, viewers: [] });
   }
 }
 
-// POST: Record a new story view
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const body = await req.json();
+    const { storyId, viewerAddress } = body;
 
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    if (!storyId || !viewerAddress) {
+      return NextResponse.json({ error: "Story ID and viewer address required" }, { status: 400 });
     }
 
-    const session = verifyAuthToken(token);
-    if (!session || !session.walletAddress) {
-      return NextResponse.json({ error: "Invalid session." }, { status: 401 });
-    }
+    const normalizedViewer = viewerAddress.toLowerCase();
 
-    const { storyId } = await req.json();
-    if (!storyId) {
-      return NextResponse.json({ error: "Story ID is required." }, { status: 400 });
-    }
+    // Check if story exists
+    const { data: story } = await supabaseServer
+      .from("Story")
+      .select("id, viewsCount")
+      .eq("id", storyId)
+      .maybeSingle();
 
-    const userAddress = session.walletAddress.toLowerCase();
-
-    // Ensure story exists
-    const story = await prisma.story.findUnique({ where: { id: storyId } });
     if (!story) {
-      return NextResponse.json({ error: "Story not found." }, { status: 404 });
+      return NextResponse.json({ error: "Story not found" }, { status: 404 });
     }
 
-    // Upsert story view to avoid unique constraint violations
-    await prisma.storyView.upsert({
-      where: {
-        storyId_viewerAddress: {
+    // Upsert story view
+    await supabaseServer
+      .from("StoryView")
+      .upsert(
+        withTimestamps({
           storyId,
-          viewerAddress: userAddress
-        }
-      },
-      create: {
-        storyId,
-        viewerAddress: userAddress
-      },
-      update: {} // No update needed if already viewed
-    });
+          viewerAddress: normalizedViewer,
+          viewedAt: new Date().toISOString(),
+        })
+      );
 
-    return NextResponse.json({ success: true, message: "Story view tracked." });
+    // Update story viewsCount
+    await supabaseServer
+      .from("Story")
+      .update({ viewsCount: (story.viewsCount || 0) + 1, updatedAt: new Date().toISOString() })
+      .eq("id", storyId);
+
+    return NextResponse.json({ success: true });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Failed to track story view" }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Failed to record view" }, { status: 500 });
   }
 }

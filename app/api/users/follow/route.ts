@@ -1,61 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    const { followerAddress, followingAddress } = await req.json();
+    const body = await req.json();
+    const { followerAddress, followingAddress } = body;
 
     if (!followerAddress || !followingAddress) {
-      return NextResponse.json({ error: "Follower and Following addresses required" }, { status: 400 });
+      return NextResponse.json({ error: "Follower and following addresses required" }, { status: 400 });
     }
 
     const follower = followerAddress.toLowerCase();
     const following = followingAddress.toLowerCase();
 
     if (follower === following) {
-      return NextResponse.json({ error: "Cannot follow self" }, { status: 400 });
+      return NextResponse.json({ error: "Cannot follow yourself" }, { status: 400 });
     }
 
-    const existingFollow = await prisma.follow.findUnique({
-      where: {
-        followerAddress_followingAddress: {
-          followerAddress: follower,
-          followingAddress: following,
-        },
-      },
-    });
+    const { data: existingFollow } = await supabaseServer
+      .from("Follow")
+      .select("id")
+      .eq("followerAddress", follower)
+      .eq("followingAddress", following)
+      .maybeSingle();
 
     if (existingFollow) {
       // Unfollow
-      await prisma.follow.delete({
-        where: { id: existingFollow.id },
-      });
-
-      return NextResponse.json({ success: true, isFollowing: false });
+      await supabaseServer.from("Follow").delete().eq("id", existingFollow.id);
+      return NextResponse.json({ success: true, isFollowing: false, action: "unfollowed" });
     } else {
       // Follow
-      await prisma.follow.create({
-        data: {
+      await supabaseServer.from("Follow").insert(
+        withTimestamps({
           followerAddress: follower,
           followingAddress: following,
-        },
-      });
+        })
+      );
 
       // Notification
-      await prisma.notification.create({
-        data: {
+      await supabaseServer.from("Notification").insert(
+        withTimestamps({
           recipientAddress: following,
-          senderAddress: follower,
+          actorAddress: follower,
           type: "FOLLOW",
-          title: "New Follower",
-          message: `User ${follower.slice(0, 6)}... started following you`,
-          link: `/profile/${follower}`,
-        },
-      });
+          message: "started following you",
+        })
+      );
 
-      return NextResponse.json({ success: true, isFollowing: true });
+      return NextResponse.json({ success: true, isFollowing: true, action: "followed" });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Follow operation failed" }, { status: 500 });
+    return NextResponse.json({ error: error.message || "Failed to update follow status" }, { status: 500 });
   }
 }

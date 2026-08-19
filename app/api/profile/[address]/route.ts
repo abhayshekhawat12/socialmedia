@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -7,50 +7,76 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { address: string } }
 ) {
-  const queryParam = params.address.toLowerCase();
+  try {
+    const address = params.address.toLowerCase();
 
-  let user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { walletAddress: queryParam },
-        { profile: { username: queryParam } },
-      ],
-    },
-    include: {
-      profile: true,
-    },
-  });
+    // Fetch user and profile
+    const { data: user } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`walletAddress.eq.${address},id.eq.${address},email.eq.${address}`)
+      .maybeSingle();
 
-  if (!user || !user.profile) {
-    return NextResponse.json({ error: "User profile not found" }, { status: 404 });
-  }
+    let profile = user ? (Array.isArray(user.profile) ? user.profile[0] : user.profile) : null;
 
-  const walletAddress = user.walletAddress || "";
+    if (!profile) {
+      // Check Profile by username
+      const { data: profByUsername } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)")
+        .eq("username", address)
+        .maybeSingle();
+      if (profByUsername) {
+        profile = profByUsername;
+      }
+    }
 
-  const [posts, followersCount, followingCount] = await Promise.all([
-    prisma.post.findMany({
-      where: { authorAddress: walletAddress },
-      orderBy: { createdAt: "desc" },
-      include: {
-        likes: true,
-        comments: true,
+    const effectiveAddress = user?.walletAddress || user?.id || address;
+
+    // Fetch Posts
+    const { data: posts } = await supabaseServer
+      .from("Post")
+      .select("*")
+      .eq("authorAddress", effectiveAddress)
+      .order("createdAt", { ascending: false });
+
+    // Fetch Pulses
+    const { data: pulses } = await supabaseServer
+      .from("Pulse")
+      .select("*")
+      .eq("authorAddress", effectiveAddress)
+      .order("createdAt", { ascending: false });
+
+    // Fetch Followers count
+    const { count: followersCount } = await supabaseServer
+      .from("Follow")
+      .select("*", { count: "exact", head: true })
+      .eq("followingAddress", effectiveAddress);
+
+    // Fetch Following count
+    const { count: followingCount } = await supabaseServer
+      .from("Follow")
+      .select("*", { count: "exact", head: true })
+      .eq("followerAddress", effectiveAddress);
+
+    return NextResponse.json({
+      success: true,
+      profile: {
+        address: effectiveAddress,
+        username: profile?.username || `user_${effectiveAddress.slice(0, 8)}`,
+        displayName: profile?.displayName || `User ${effectiveAddress.slice(0, 6)}`,
+        bio: profile?.bio || "Pulse Creator",
+        avatarUrl: profile?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${effectiveAddress}`,
+        bannerUrl: profile?.bannerUrl || "",
+        postsCount: (posts || []).length,
+        reelsCount: (pulses || []).length,
+        followersCount: followersCount || 0,
+        followingCount: followingCount || 0,
       },
-    }),
-    prisma.follow.count({ where: { followingAddress: walletAddress } }),
-    prisma.follow.count({ where: { followerAddress: walletAddress } }),
-  ]);
-
-  return NextResponse.json({
-    user: {
-      id: user.id,
-      walletAddress: user.walletAddress,
-      profile: user.profile,
-    },
-    posts,
-    stats: {
-      postsCount: posts.length,
-      followersCount,
-      followingCount,
-    },
-  });
+      posts: posts || [],
+      pulses: pulses || [],
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to fetch profile" }, { status: 500 });
+  }
 }

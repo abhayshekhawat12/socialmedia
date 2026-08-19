@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(
   req: NextRequest,
@@ -15,56 +17,52 @@ export async function POST(
     const normalizedUser = userAddress.toLowerCase();
     const pulseId = params.id;
 
-    const existingLike = await prisma.like.findUnique({
-      where: {
-        pulseId_userAddress: {
-          pulseId,
-          userAddress: normalizedUser,
-        },
-      },
-    });
+    const { data: existingLike } = await supabaseServer
+      .from("Like")
+      .select("id")
+      .eq("pulseId", pulseId)
+      .eq("userAddress", normalizedUser)
+      .maybeSingle();
+
+    const { data: currentPulse } = await supabaseServer
+      .from("Pulse")
+      .select("likeCount, authorAddress")
+      .eq("id", pulseId)
+      .maybeSingle();
+
+    if (!currentPulse) {
+      return NextResponse.json({ error: "Reel not found" }, { status: 404 });
+    }
 
     if (existingLike) {
       // Unlike
-      await prisma.like.delete({
-        where: { id: existingLike.id },
-      });
-
-      const pulse = await prisma.pulse.update({
-        where: { id: pulseId },
-        data: { likeCount: { decrement: 1 } },
-      });
-
-      return NextResponse.json({ success: true, liked: false, likeCount: Math.max(0, pulse.likeCount) });
+      await supabaseServer.from("Like").delete().eq("id", existingLike.id);
+      const newCount = Math.max(0, (currentPulse.likeCount || 1) - 1);
+      await supabaseServer.from("Pulse").update({ likeCount: newCount, updatedAt: new Date().toISOString() }).eq("id", pulseId);
+      return NextResponse.json({ success: true, liked: false, likeCount: newCount });
     } else {
       // Like
-      await prisma.like.create({
-        data: {
+      await supabaseServer.from("Like").insert(
+        withTimestamps({
           pulseId,
           userAddress: normalizedUser,
-        },
-      });
+        })
+      );
+      const newCount = (currentPulse.likeCount || 0) + 1;
+      await supabaseServer.from("Pulse").update({ likeCount: newCount, updatedAt: new Date().toISOString() }).eq("id", pulseId);
 
-      const pulse = await prisma.pulse.update({
-        where: { id: pulseId },
-        data: { likeCount: { increment: 1 } },
-      });
-
-      // Notification trigger
-      if (pulse.authorAddress !== normalizedUser) {
-        await prisma.notification.create({
-          data: {
-            recipientAddress: pulse.authorAddress,
-            senderAddress: normalizedUser,
+      if (currentPulse.authorAddress !== normalizedUser) {
+        await supabaseServer.from("Notification").insert(
+          withTimestamps({
+            recipientAddress: currentPulse.authorAddress,
+            actorAddress: normalizedUser,
             type: "LIKE",
-            title: "New Like on Reel",
-            message: `User ${normalizedUser.slice(0, 6)}... liked your Reel`,
-            link: `/pulse`,
-          },
-        });
+            message: `liked your Reel`,
+          })
+        );
       }
 
-      return NextResponse.json({ success: true, liked: true, likeCount: pulse.likeCount });
+      return NextResponse.json({ success: true, liked: true, likeCount: newCount });
     }
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Like action failed" }, { status: 500 });

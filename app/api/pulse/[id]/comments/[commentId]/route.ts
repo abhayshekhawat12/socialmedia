@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function DELETE(
   req: NextRequest,
@@ -8,41 +10,46 @@ export async function DELETE(
   try {
     const { searchParams } = new URL(req.url);
     const userAddress = searchParams.get("userAddress")?.toLowerCase();
-
     const { id: pulseId, commentId } = params;
 
-    const comment = await prisma.comment.findUnique({
-      where: { id: commentId },
-    });
+    if (!userAddress || !commentId) {
+      return NextResponse.json({ error: "userAddress and commentId required" }, { status: 400 });
+    }
+
+    const { data: comment } = await supabaseServer
+      .from("Comment")
+      .select("*")
+      .eq("id", commentId)
+      .maybeSingle();
 
     if (!comment) {
       return NextResponse.json({ error: "Comment not found" }, { status: 404 });
     }
 
-    if (userAddress && comment.authorAddress.toLowerCase() !== userAddress) {
-      return NextResponse.json({ error: "Unauthorized to delete this comment" }, { status: 403 });
+    if (comment.authorAddress.toLowerCase() !== userAddress) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    await prisma.comment.delete({
-      where: { id: commentId },
-    });
+    await supabaseServer.from("Comment").delete().eq("id", commentId);
 
-    // Recalculate true comment count
-    const trueCount = await prisma.comment.count({
-      where: { pulseId },
-    });
+    const { data: currentPulse } = await supabaseServer
+      .from("Pulse")
+      .select("commentCount")
+      .eq("id", pulseId)
+      .maybeSingle();
 
-    await prisma.pulse.update({
-      where: { id: pulseId },
-      data: { commentCount: trueCount },
-    });
+    const newCount = Math.max(0, (currentPulse?.commentCount || 1) - 1);
+    await supabaseServer
+      .from("Pulse")
+      .update({ commentCount: newCount, updatedAt: new Date().toISOString() })
+      .eq("id", pulseId);
 
     return NextResponse.json({
       success: true,
-      commentCount: trueCount,
+      message: "Comment deleted",
+      commentCount: newCount,
     });
   } catch (error: any) {
-    console.error("DELETE /api/pulse/[id]/comments/[commentId] error:", error);
     return NextResponse.json({ error: error.message || "Failed to delete comment" }, { status: 500 });
   }
 }

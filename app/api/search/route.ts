@@ -1,70 +1,87 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const query = searchParams.get("q")?.trim() || "";
+  try {
+    const { searchParams } = new URL(req.url);
+    const query = searchParams.get("q")?.trim() || "";
 
-  if (!query) {
-    // Return trending hashtags & top creators as fallback
-    const hashtags = await prisma.hashtag.findMany({
-      orderBy: { postCount: "desc" },
-      take: 10,
-    });
+    if (!query) {
+      const { data: hashtags } = await supabaseServer
+        .from("Hashtag")
+        .select("*")
+        .order("postCount", { ascending: false })
+        .limit(10);
 
-    const topProfiles = await prisma.profile.findMany({
-      take: 8,
-      orderBy: { createdAt: "desc" },
-    });
+      const { data: topProfiles } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)")
+        .limit(10);
 
-    const trendingPosts = await prisma.post.findMany({
-      take: 12,
-      orderBy: { likeCount: "desc" },
-      include: { likes: true, comments: true },
-    });
+      return NextResponse.json({
+        success: true,
+        hashtags: (hashtags || []).map((h) => ({
+          tag: h.tag.startsWith("#") ? h.tag : `#${h.tag}`,
+          count: `${(h.postCount / 1000).toFixed(1)}k posts`,
+        })),
+        accounts: (topProfiles || []).map((p) => ({
+          address: p.user?.walletAddress || p.userId,
+          name: p.displayName,
+          handle: `@${p.username}`,
+          avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${p.userId}`,
+          followers: "1.2k",
+        })),
+        posts: [],
+      });
+    }
+
+    const cleanQ = query.replace("#", "").toLowerCase();
+
+    // Profiles search
+    const { data: profiles } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .or(`username.ilike.%${cleanQ}%,displayName.ilike.%${cleanQ}%`)
+      .limit(10);
+
+    // Posts search
+    const { data: posts } = await supabaseServer
+      .from("Post")
+      .select("*")
+      .ilike("caption", `%${query}%`)
+      .limit(15);
+
+    // Hashtags search
+    const { data: hashtags } = await supabaseServer
+      .from("Hashtag")
+      .select("*")
+      .ilike("tag", `%${cleanQ}%`)
+      .limit(10);
 
     return NextResponse.json({
-      trendingHashtags: hashtags,
-      trendingCreators: topProfiles,
-      trendingPosts,
+      success: true,
+      accounts: (profiles || []).map((p) => ({
+        address: p.user?.walletAddress || p.userId,
+        name: p.displayName,
+        handle: `@${p.username}`,
+        avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${p.userId}`,
+        followers: "1.2k",
+      })),
+      posts: (posts || []).map((p) => ({
+        id: p.id,
+        image: p.mediaUrl,
+        type: p.mediaType,
+        likes: p.likeCount,
+        comments: p.commentCount,
+      })),
+      hashtags: (hashtags || []).map((h) => ({
+        tag: h.tag.startsWith("#") ? h.tag : `#${h.tag}`,
+        count: `${h.postCount} posts`,
+      })),
     });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Search failed" }, { status: 500 });
   }
-
-  const cleanQuery = query.startsWith("#") ? query.slice(1).toLowerCase() : query.toLowerCase();
-
-  const [users, posts, hashtags] = await Promise.all([
-    prisma.profile.findMany({
-      where: {
-        OR: [
-          { username: { contains: cleanQuery } },
-          { displayName: { contains: cleanQuery } },
-          { user: { walletAddress: { contains: cleanQuery } } },
-        ],
-      },
-      take: 10,
-      include: { user: true },
-    }),
-    prisma.post.findMany({
-      where: {
-        OR: [
-          { caption: { contains: query } },
-          { location: { contains: query } },
-        ],
-      },
-      take: 20,
-      orderBy: { createdAt: "desc" },
-      include: { likes: true, comments: true },
-    }),
-    prisma.hashtag.findMany({
-      where: { tag: { contains: cleanQuery } },
-      take: 10,
-    }),
-  ]);
-
-  return NextResponse.json({
-    users,
-    posts,
-    hashtags,
-    verifiedRecords: [],
-  });
 }

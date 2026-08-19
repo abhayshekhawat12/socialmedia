@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import fs from "fs";
-import path from "path";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -10,28 +8,28 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const pulse = await prisma.pulse.findUnique({
-      where: { id: params.id },
-      include: {
-        audio: true,
-        likes: true,
-        savedPulses: true,
-        comments: {
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    });
+    const { data: pulse, error } = await supabaseServer
+      .from("Pulse")
+      .select(`
+        *,
+        audio:Audio(*),
+        likes:Like(userAddress),
+        savedPulses:SavedPulse(userAddress),
+        comments:PulseComment(id, authorAddress, content, createdAt)
+      `)
+      .eq("id", params.id)
+      .maybeSingle();
 
-    if (!pulse) {
+    if (error || !pulse) {
       return NextResponse.json({ error: "Reel not found" }, { status: 404 });
     }
 
-    const authorProfile = await prisma.profile.findFirst({
-      where: {
-        user: { walletAddress: pulse.authorAddress },
-      },
-      include: { user: true },
-    });
+    const authorKey = (pulse.authorAddress || "").toLowerCase();
+    const { data: prof } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .or(`userId.eq.${authorKey},username.eq.${authorKey}`)
+      .maybeSingle();
 
     return NextResponse.json({
       success: true,
@@ -39,9 +37,9 @@ export async function GET(
         ...pulse,
         author: {
           walletAddress: pulse.authorAddress,
-          username: authorProfile?.username || `user_${pulse.authorAddress.slice(0, 8)}`,
-          displayName: authorProfile?.displayName || `Creator ${pulse.authorAddress.slice(0, 6)}`,
-          avatarUrl: authorProfile?.avatarUrl || "",
+          username: prof?.username || `user_${authorKey.slice(0, 8)}`,
+          displayName: prof?.displayName || `Creator ${authorKey.slice(0, 6)}`,
+          avatarUrl: prof?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${authorKey}`,
         },
       },
     });
@@ -50,7 +48,6 @@ export async function GET(
   }
 }
 
-// DELETE /api/pulse/[id]?userAddress=...
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -64,9 +61,11 @@ export async function DELETE(
       return NextResponse.json({ error: "userAddress and pulseId required" }, { status: 400 });
     }
 
-    const pulse = await prisma.pulse.findUnique({
-      where: { id: pulseId },
-    });
+    const { data: pulse } = await supabaseServer
+      .from("Pulse")
+      .select("*")
+      .eq("id", pulseId)
+      .maybeSingle();
 
     if (!pulse) {
       return NextResponse.json({ error: "Reel not found" }, { status: 404 });
@@ -76,22 +75,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized to delete this reel" }, { status: 403 });
     }
 
-    // Try deleting media from disk if it was stored locally
-    if (pulse.videoUrl && pulse.videoUrl.startsWith("/uploads/")) {
-      try {
-        const filePath = path.join(process.cwd(), "public", pulse.videoUrl);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (fileErr) {
-        console.warn("Could not delete file from disk:", fileErr);
-      }
-    }
-
-    // Delete pulse record (cascade deletes comments, likes, savedPulses, shares, views)
-    await prisma.pulse.delete({
-      where: { id: pulseId },
-    });
+    await supabaseServer.from("Pulse").delete().eq("id", pulseId);
 
     return NextResponse.json({
       success: true,
@@ -99,7 +83,6 @@ export async function DELETE(
       pulseId,
     });
   } catch (error: any) {
-    console.error("DELETE /api/pulse/[id] error:", error);
     return NextResponse.json({ error: error.message || "Failed to delete reel" }, { status: 500 });
   }
 }

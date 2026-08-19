@@ -1,56 +1,91 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const recipientAddress = searchParams.get("recipientAddress")?.toLowerCase();
-
-  if (!recipientAddress) {
-    return NextResponse.json({ error: "Recipient address required" }, { status: 400 });
-  }
-
-  const notifications = await prisma.notification.findMany({
-    where: { recipientAddress },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
-
-  const senderAddresses = Array.from(new Set(notifications.map((n) => n.senderAddress)));
-  const profiles = await prisma.profile.findMany({
-    where: {
-      user: { walletAddress: { in: senderAddresses } },
-    },
-  });
-
-  const enrichedNotifications = notifications.map((n) => {
-    const senderProfile = profiles.find((p) => p.userId === n.senderAddress || p.id === n.senderAddress);
-    return {
-      ...n,
-      senderProfile: senderProfile || {
-        username: `user_${n.senderAddress.slice(0, 8)}`,
-        displayName: `Creator ${n.senderAddress.slice(0, 6)}`,
-        avatarUrl: "",
-      },
-    };
-  });
-
-  return NextResponse.json({ success: true, notifications: enrichedNotifications });
-}
-
-export async function PATCH(req: NextRequest) {
   try {
-    const { recipientAddress } = await req.json();
-    if (!recipientAddress) {
-      return NextResponse.json({ error: "Recipient address required" }, { status: 400 });
+    const { searchParams } = new URL(req.url);
+    const userAddress = searchParams.get("userAddress")?.toLowerCase();
+
+    if (!userAddress) {
+      return NextResponse.json({ error: "User address is required" }, { status: 400 });
     }
 
-    await prisma.notification.updateMany({
-      where: { recipientAddress: recipientAddress.toLowerCase(), read: false },
-      data: { read: true },
+    const { data: notifications, error } = await supabaseServer
+      .from("Notification")
+      .select("*")
+      .eq("recipientAddress", userAddress)
+      .order("createdAt", { ascending: false })
+      .limit(30);
+
+    if (error) {
+      return NextResponse.json({ success: true, notifications: [] });
+    }
+
+    const notifList = notifications || [];
+    const actorAddresses = Array.from(new Set(notifList.map((n) => (n.actorAddress || "").toLowerCase()))).filter(Boolean);
+
+    let profiles: any[] = [];
+    if (actorAddresses.length > 0) {
+      const { data: profileData } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profileData || [];
+    }
+
+    const profileMap = new Map<string, any>();
+    for (const p of profiles) {
+      if (p.user) {
+        if (p.user.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+        if (p.user.id) profileMap.set(p.user.id.toLowerCase(), p);
+      }
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
+    }
+
+    const enriched = notifList.map((n) => {
+      const actorKey = (n.actorAddress || "").toLowerCase();
+      const prof = profileMap.get(actorKey);
+      return {
+        ...n,
+        actorProfile: {
+          username: prof?.username || `user_${actorKey.slice(0, 8)}`,
+          displayName: prof?.displayName || `User ${actorKey.slice(0, 6)}`,
+          avatarUrl: prof?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${actorKey}`,
+        },
+      };
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, notifications: enriched });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Mark notifications read failed" }, { status: 500 });
+    return NextResponse.json({ success: true, notifications: [] });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { notificationId, userAddress, markAll } = body;
+
+    if (markAll && userAddress) {
+      await supabaseServer
+        .from("Notification")
+        .update({ read: true })
+        .eq("recipientAddress", userAddress.toLowerCase());
+      return NextResponse.json({ success: true });
+    }
+
+    if (notificationId) {
+      await supabaseServer
+        .from("Notification")
+        .update({ read: true })
+        .eq("id", notificationId);
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Invalid parameters" }, { status: 400 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || "Failed to update notification" }, { status: 500 });
   }
 }
