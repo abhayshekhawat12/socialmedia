@@ -6,25 +6,87 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const address = searchParams.get("walletAddress")?.toLowerCase();
+  const rawAddress = searchParams.get("walletAddress") || "";
+  const address = rawAddress.toLowerCase().trim();
 
   if (!address) {
     return NextResponse.json({ error: "Address required" }, { status: 400 });
   }
 
-  const profile = await prisma.profile.findFirst({
+  let profile = await prisma.profile.findFirst({
     where: {
       OR: [
         { user: { walletAddress: address } },
+        { user: { walletAddress: rawAddress } },
         { user: { id: address } },
+        { user: { id: rawAddress } },
         { user: { email: address } },
         { user: { googleId: address } },
+        { user: { googleId: rawAddress } },
+        { username: address },
       ],
     },
     include: {
       user: true,
     },
   });
+
+  // If profile not found, check if this is an authenticated user requesting their profile
+  if (!profile) {
+    const cookieToken = req.cookies.get("block_social_jwt")?.value;
+    const authHeader = req.headers.get("authorization");
+    const token = authHeader?.replace("Bearer ", "") || cookieToken;
+
+    if (token) {
+      const session = verifyAuthToken(token);
+      if (session && (session.userId === rawAddress || session.email?.toLowerCase() === address || session.walletAddress === rawAddress)) {
+        // Auto-provision user & profile
+        try {
+          const isEmail = address.includes("@");
+          const displayName = session.name || (isEmail ? address.split("@")[0] : `User_${rawAddress.slice(0, 6)}`);
+          const baseUsername = `u_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
+          let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
+
+          let collision = await prisma.profile.findUnique({ where: { username: finalUsername } });
+          while (collision) {
+            finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
+            collision = await prisma.profile.findUnique({ where: { username: finalUsername } });
+          }
+
+          const newUser = await prisma.user.upsert({
+            where: { id: session.userId || rawAddress },
+            update: {
+              email: session.email?.toLowerCase() || (isEmail ? address : undefined),
+              walletAddress: session.walletAddress || rawAddress,
+            },
+            create: {
+              id: session.userId || rawAddress,
+              walletAddress: session.walletAddress || rawAddress,
+              email: session.email?.toLowerCase() || (isEmail ? address : undefined),
+              profile: {
+                create: {
+                  username: finalUsername,
+                  displayName,
+                  avatarUrl: session.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(address)}`,
+                  bio: "Pulse Social Member.",
+                },
+              },
+            },
+            include: { profile: true },
+          });
+
+          if (newUser && newUser.profile) {
+            profile = {
+              ...newUser.profile,
+              user: newUser,
+            };
+          }
+        } catch (autoErr) {
+          console.warn("Auto profile provision notice:", autoErr);
+        }
+      }
+    }
+  }
 
   if (!profile) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
@@ -53,7 +115,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60",
+        "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
       },
     }
   );
@@ -62,54 +124,73 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "");
+    const cookieToken = req.cookies.get("block_social_jwt")?.value;
+    const token = authHeader?.replace("Bearer ", "") || cookieToken;
 
-    let walletAddress: string | null = null;
+    let targetUserIdentifier: string | null = null;
     if (token) {
       const session = verifyAuthToken(token);
-      if (session) walletAddress = session.walletAddress || null;
+      if (session) {
+        targetUserIdentifier = session.userId || session.walletAddress || null;
+      }
     }
 
     const body = await req.json();
-    const targetAddress = body.walletAddress?.toLowerCase() || walletAddress;
+    const { displayName, bio, avatarUrl, bannerUrl, username } = body;
+    const walletAddress = body.walletAddress || targetUserIdentifier;
 
-    if (!targetAddress) {
-      return NextResponse.json({ error: "Unauthorized user request" }, { status: 401 });
+    if (!walletAddress) {
+      return NextResponse.json({ error: "Wallet address or session required" }, { status: 400 });
     }
 
-    const { username, displayName, nickname, bio, avatarUrl, bannerUrl } = body;
-
-    const user = await prisma.user.findUnique({
-      where: { walletAddress: targetAddress },
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { walletAddress },
+          { id: walletAddress },
+          { email: walletAddress.toLowerCase() },
+        ],
+      },
+      include: { profile: true },
     });
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    const updateData: any = {};
+    if (displayName !== undefined) updateData.displayName = displayName;
+    if (bio !== undefined) updateData.bio = bio;
+    if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+    if (bannerUrl !== undefined) updateData.bannerUrl = bannerUrl;
+    if (username !== undefined) {
+      // Check username uniqueness
+      const existing = await prisma.profile.findUnique({ where: { username } });
+      if (existing && existing.userId !== user.id) {
+        return NextResponse.json({ error: "Username already taken" }, { status: 400 });
+      }
+      updateData.username = username;
+    }
+
     const updatedProfile = await prisma.profile.upsert({
       where: { userId: user.id },
+      update: updateData,
       create: {
         userId: user.id,
-        username: username || `user_${targetAddress.slice(0, 8)}`,
-        displayName: displayName || `User ${targetAddress.slice(0, 6)}`,
-        nickname: nickname || "",
+        username: username || `user_${user.id.slice(0, 8)}`,
+        displayName: displayName || "Pulse Creator",
         bio: bio || "",
         avatarUrl: avatarUrl || "",
         bannerUrl: bannerUrl || "",
       },
-      update: {
-        ...(username && { username }),
-        ...(displayName && { displayName }),
-        ...(nickname !== undefined && { nickname }),
-        ...(bio !== undefined && { bio }),
-        ...(avatarUrl !== undefined && { avatarUrl }),
-        ...(bannerUrl !== undefined && { bannerUrl }),
-      },
     });
 
-    return NextResponse.json({ success: true, profile: updatedProfile });
+    return NextResponse.json({
+      success: true,
+      profile: updatedProfile,
+    });
   } catch (error: any) {
+    console.error("Profile update error:", error);
     return NextResponse.json({ error: error.message || "Failed to update profile" }, { status: 500 });
   }
 }

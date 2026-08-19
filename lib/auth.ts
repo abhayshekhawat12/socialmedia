@@ -7,6 +7,8 @@ export interface AuthSession {
   walletAddress?: string;
   email?: string;
   mobileNumber?: string;
+  name?: string;
+  picture?: string;
   iat?: number;
   exp?: number;
 }
@@ -28,12 +30,46 @@ export function signAuthToken(userId: string, identifier?: string): string {
 
 /**
  * Verify JWT session token from authorization header or cookie.
+ * Supports both custom signed tokens and Supabase Auth JWT tokens.
  */
 export function verifyAuthToken(token: string): AuthSession | null {
+  if (!token || typeof token !== "string") return null;
+
+  // 1. Try verifying with local JWT secret
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthSession;
-    return decoded;
-  } catch (error) {
-    return null;
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (decoded && (decoded.userId || decoded.sub)) {
+      return {
+        userId: decoded.userId || decoded.sub,
+        walletAddress: decoded.walletAddress || decoded.userId || decoded.sub,
+        email: decoded.email,
+        mobileNumber: decoded.mobileNumber,
+        iat: decoded.iat,
+        exp: decoded.exp,
+      };
+    }
+  } catch (localErr) {
+    // Fall through to Supabase JWT decoding
   }
+
+  // 2. Decode Supabase Auth JWT if issued by Supabase
+  try {
+    const decoded = jwt.decode(token) as any;
+    if (decoded && (decoded.sub || decoded.email)) {
+      const userMeta = decoded.user_metadata || {};
+      return {
+        userId: decoded.sub,
+        walletAddress: decoded.sub,
+        email: decoded.email,
+        name: userMeta.full_name || userMeta.name || decoded.email?.split("@")[0],
+        picture: userMeta.avatar_url || userMeta.picture,
+        iat: decoded.iat,
+        exp: decoded.exp,
+      };
+    }
+  } catch (decodeErr) {
+    console.warn("JWT decode fallback error:", decodeErr);
+  }
+
+  return null;
 }

@@ -5,76 +5,92 @@ import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, name, picture, googleId } = await req.json();
+    const { email, name, picture, googleId, supabaseId } = await req.json();
 
-    if (!googleId || !email || !name) {
+    if (!email && !googleId && !supabaseId) {
       return NextResponse.json({ error: "Missing required Google account parameters." }, { status: 400 });
     }
 
-    // Find user by googleId, email, or profile email
+    const cleanEmail = (email || "").toLowerCase().trim();
+    const effectiveName = name || cleanEmail.split("@")[0] || "Aura Member";
+    const effectiveGoogleId = googleId || supabaseId;
+
+    // 1. Find user by supabaseId, googleId, email, or walletAddress
+    const orConditions: any[] = [];
+    if (supabaseId) orConditions.push({ id: supabaseId }, { walletAddress: supabaseId });
+    if (effectiveGoogleId) orConditions.push({ googleId: effectiveGoogleId });
+    if (cleanEmail) orConditions.push({ email: cleanEmail });
+
     let user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { googleId },
-          { email: email.toLowerCase() }
-        ]
-      },
-      include: { profile: true }
+      where: { OR: orConditions },
+      include: { profile: true },
     });
 
     if (user) {
-      // Update Google ID or profile picture if missing
+      // Update Google ID, email, or missing profile
       const updateData: any = {};
-      if (!user.googleId) updateData.googleId = googleId;
-      if (!user.email) updateData.email = email.toLowerCase();
-      
+      if (effectiveGoogleId && !user.googleId) updateData.googleId = effectiveGoogleId;
+      if (cleanEmail && !user.email) updateData.email = cleanEmail;
+      if (!user.walletAddress) updateData.walletAddress = supabaseId || user.id;
+
       if (Object.keys(updateData).length > 0) {
         user = await prisma.user.update({
           where: { id: user.id },
           data: updateData,
-          include: { profile: true }
+          include: { profile: true },
         });
       }
-    } else {
-      // Generate deterministic unique handle / address based on Google ID
-      const hash = crypto.createHash("sha256").update(`google:${googleId}`).digest("hex");
-      const userIdentifier = `usr_${hash.slice(0, 16)}`;
 
-      let finalAddress = userIdentifier;
-      let collision = await prisma.user.findUnique({ where: { walletAddress: finalAddress } });
-      let counter = 0;
-      while (collision) {
-        counter++;
-        const newHash = crypto.createHash("sha256").update(`google:${googleId}:${counter}`).digest("hex");
-        finalAddress = `usr_${newHash.slice(0, 16)}`;
-        collision = await prisma.user.findUnique({ where: { walletAddress: finalAddress } });
+      // Ensure profile exists for existing user
+      if (!user.profile) {
+        const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
+        let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
+        let usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
+        while (usernameCollision) {
+          finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
+          usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
+        }
+
+        const newProfile = await prisma.profile.create({
+          data: {
+            userId: user.id,
+            username: finalUsername,
+            displayName: effectiveName,
+            avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanEmail || user.id)}`,
+            bio: "Pulse Social Member.",
+          },
+        });
+        user = { ...user, profile: newProfile };
       }
+    } else {
+      // 2. Create brand-new user with authentic Supabase user ID
+      const finalUserId = supabaseId || undefined;
+      const finalAddress = supabaseId || `usr_${crypto.createHash("sha256").update(`google:${effectiveGoogleId}:${cleanEmail}`).digest("hex").slice(0, 16)}`;
 
-      // Generate a unique clean username
-      const baseUsername = `g_${name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().slice(0, 12)}`;
-      let finalUsername = baseUsername;
+      const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
+      let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
       let usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
       while (usernameCollision) {
         finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
         usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
       }
 
-      // Create new user & profile
       user = await prisma.user.create({
         data: {
-          googleId,
-          email: email.toLowerCase(),
+          id: finalUserId,
+          googleId: effectiveGoogleId,
+          email: cleanEmail || undefined,
           walletAddress: finalAddress,
           profile: {
             create: {
               username: finalUsername,
-              displayName: name,
-              avatarUrl: picture || "",
-              bio: "Google Account linked to Aura.",
-            }
-          }
+              displayName: effectiveName,
+              avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanEmail || finalAddress)}`,
+              bio: "Pulse Social Member.",
+            },
+          },
         },
-        include: { profile: true }
+        include: { profile: true },
       });
     }
 
@@ -97,7 +113,7 @@ export async function POST(req: NextRequest) {
     });
 
     response.cookies.set("block_social_jwt", token, {
-      httpOnly: true,
+      httpOnly: false,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 30 * 24 * 60 * 60,

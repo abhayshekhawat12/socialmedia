@@ -46,6 +46,7 @@ function CallbackHandler() {
             name,
             picture,
             googleId,
+            supabaseId: user.id,
           }),
         });
 
@@ -56,14 +57,14 @@ function CallbackHandler() {
 
         // Store session cookie for server components & authContext
         try {
-          const isHttps = window.location.protocol === "https:";
+          const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
           document.cookie = `block_social_jwt=${data.token}; path=/; max-age=2592000; SameSite=Lax; ${isHttps ? "Secure" : ""}`;
         } catch {}
 
         if (isMounted) setStatus("Authentication successful! Redirecting to feed...");
         setTimeout(() => {
           window.location.replace("/feed");
-        }, 300);
+        }, 250);
       } catch (postErr: any) {
         console.error("Backend auth sync error:", postErr);
         if (isMounted) {
@@ -130,7 +131,7 @@ function CallbackHandler() {
               "Authentication timed out. The session could not be verified automatically."
             );
           }
-        }, 7000);
+        }, 8000);
 
         return () => {
           authListener.subscription.unsubscribe();
@@ -151,8 +152,8 @@ function CallbackHandler() {
   }, [router]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#0a0a0f] text-white px-4">
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center backdrop-blur-xl shadow-2xl space-y-6">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#070b14] text-white px-4">
+      <div className="glass p-8 max-w-md w-full text-center space-y-6">
         {error ? (
           <div className="space-y-4 animate-in fade-in">
             <div className="w-14 h-14 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center mx-auto border border-red-500/30">
@@ -175,7 +176,7 @@ function CallbackHandler() {
           <div className="space-y-4">
             <Loader2 className="w-10 h-10 text-cyan-400 animate-spin mx-auto" />
             <h2 className="text-xl font-bold text-white tracking-wide">Google Sign-In</h2>
-            <p className="text-sm text-gray-400">{status}</p>
+            <p className="text-sm text-slate-300">{status}</p>
           </div>
         )}
       </div>
@@ -187,7 +188,7 @@ export default function AuthCallbackPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] text-white">
+        <div className="min-h-screen flex items-center justify-center bg-[#070b14] text-white">
           <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
         </div>
       }

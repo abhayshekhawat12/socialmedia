@@ -94,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearErrorNotice = () => setErrorNotice(null);
 
-  const fetchUserProfile = useCallback(async (identifier: string) => {
+  const fetchUserProfile = useCallback(async (identifier: string, userMeta?: any) => {
     if (!identifier) return;
     try {
       const res = await fetch(`/api/profile?walletAddress=${encodeURIComponent(identifier)}`);
@@ -114,6 +114,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(data.user);
           const resolvedAccount = data.user.walletAddress || data.user.id || identifier;
           setAccount(resolvedAccount);
+        }
+      } else if (res.status === 404 && userMeta) {
+        // Auto-provision profile if newly authenticated user is missing DB record
+        try {
+          const createRes = await fetch("/api/auth/google", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              supabaseId: userMeta.id || identifier,
+              email: userMeta.email || (identifier.includes("@") ? identifier : undefined),
+              name: userMeta.user_metadata?.full_name || userMeta.user_metadata?.name || userMeta.email?.split("@")[0] || "Pulse Member",
+              picture: userMeta.user_metadata?.avatar_url || userMeta.user_metadata?.picture || "",
+              googleId: userMeta.id || identifier,
+            }),
+          });
+          if (createRes.ok) {
+            const createData = await createRes.json();
+            if (createData.user) {
+              setUser(createData.user);
+              setAccount(createData.user.walletAddress || createData.user.id);
+              setProfile(createData.user.profile);
+            }
+          }
+        } catch (provErr) {
+          console.warn("Auto-provision profile fallback error:", provErr);
         }
       }
     } catch (e) {
@@ -168,7 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setToken(session.access_token);
             setAccount(userIdentifier);
             document.cookie = `block_social_jwt=${session.access_token}; path=/; max-age=2592000; SameSite=Lax; ${window.location.protocol === "https:" ? "Secure" : ""}`;
-            await fetchUserProfile(userIdentifier);
+            await fetchUserProfile(userIdentifier, session.user);
           }
         } else {
           // Check if server session cookie exists
@@ -214,7 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(session.access_token);
         setAccount(userIdentifier);
         document.cookie = `block_social_jwt=${session.access_token}; path=/; max-age=2592000; SameSite=Lax; ${window.location.protocol === "https:" ? "Secure" : ""}`;
-        await fetchUserProfile(userIdentifier);
+        await fetchUserProfile(userIdentifier, session.user);
       } else {
         setToken(null);
         setAccount("");
