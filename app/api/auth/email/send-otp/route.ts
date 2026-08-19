@@ -1,24 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { sendSmsOtp } from "@/lib/sms";
+import { sendEmailOtp } from "@/lib/email";
 import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
   try {
-    const { mobileNumber } = await req.json();
+    const { email } = await req.json();
 
-    if (!mobileNumber || !/^\+?[1-9]\d{6,14}$/.test(mobileNumber.replace(/\s+/g, ""))) {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return NextResponse.json(
-        { error: "Invalid mobile number. Please provide a valid phone number with country code (e.g. +919876543210)." },
+        { error: "Invalid email address. Please enter a valid email (e.g. alex@gmail.com)." },
         { status: 400 }
       );
     }
 
-    const formattedNumber = mobileNumber.startsWith("+") ? mobileNumber.replace(/\s+/g, "") : `+${mobileNumber.replace(/\s+/g, "")}`;
+    const cleanEmail = email.toLowerCase().trim();
 
     // 1. Rate limiting & Resend Cooldown (60 seconds)
     const existing = await prisma.otpVerification.findUnique({
-      where: { identifier: formattedNumber },
+      where: { identifier: cleanEmail },
     });
 
     if (existing) {
@@ -34,28 +34,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Generate cryptographically secure 6-digit OTP
+    // 2. Generate secure 6-digit OTP
     const rawOtp = crypto.randomInt(100000, 999999).toString();
     const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
 
-    // 3. Dispatch real SMS via configured SMS provider
-    const smsResult = await sendSmsOtp(formattedNumber, rawOtp);
+    // 3. Dispatch real Email via Resend / SendGrid / SMTP
+    const emailResult = await sendEmailOtp(cleanEmail, rawOtp);
 
-    if (!smsResult.success) {
+    if (!emailResult.success) {
       return NextResponse.json(
-        { error: smsResult.error || "Failed to send SMS OTP. Please try again or check SMS provider configuration." },
+        { error: emailResult.error || "Failed to send verification email. Please check your email configuration." },
         { status: 502 }
       );
     }
 
     // 4. Save hashed OTP in PostgreSQL
     await prisma.otpVerification.upsert({
-      where: { identifier: formattedNumber },
+      where: { identifier: cleanEmail },
       create: {
-        identifier: formattedNumber,
-        mobileNumber: formattedNumber,
-        type: "mobile",
+        identifier: cleanEmail,
+        email: cleanEmail,
+        type: "email",
         otpHash,
         expiresAt,
         attempts: 0,
@@ -71,12 +71,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Verification code sent successfully to your mobile number.",
+      message: "Verification code sent to your email address.",
     });
   } catch (error: any) {
-    console.error("[Send Mobile OTP Error]", error);
+    console.error("[Send Email OTP Error]", error);
     return NextResponse.json(
-      { error: error.message || "Failed to send OTP code." },
+      { error: error.message || "Failed to send email verification code." },
       { status: 500 }
     );
   }

@@ -338,7 +338,10 @@ CREATE TABLE "TrendingContent" (
 -- CreateTable
 CREATE TABLE "OtpVerification" (
     "id" TEXT NOT NULL,
-    "mobileNumber" TEXT NOT NULL,
+    "identifier" TEXT NOT NULL,
+    "mobileNumber" TEXT,
+    "email" TEXT,
+    "type" TEXT NOT NULL DEFAULT 'mobile',
     "otpHash" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "attempts" INTEGER NOT NULL DEFAULT 0,
@@ -630,7 +633,16 @@ CREATE UNIQUE INDEX "Analytics_pulseId_key" ON "Analytics"("pulseId");
 CREATE UNIQUE INDEX "Analytics_postId_key" ON "Analytics"("postId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "OtpVerification_mobileNumber_key" ON "OtpVerification"("mobileNumber");
+CREATE UNIQUE INDEX "OtpVerification_identifier_key" ON "OtpVerification"("identifier");
+
+-- CreateIndex
+CREATE INDEX "OtpVerification_identifier_idx" ON "OtpVerification"("identifier");
+
+-- CreateIndex
+CREATE INDEX "OtpVerification_mobileNumber_idx" ON "OtpVerification"("mobileNumber");
+
+-- CreateIndex
+CREATE INDEX "OtpVerification_email_idx" ON "OtpVerification"("email");
 
 -- CreateIndex
 CREATE INDEX "SavedPost_userAddress_idx" ON "SavedPost"("userAddress");

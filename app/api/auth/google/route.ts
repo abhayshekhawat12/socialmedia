@@ -85,16 +85,26 @@ export async function POST(req: NextRequest) {
     // Sign session token
     const token = signAuthToken(user.id, user.walletAddress || user.id);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       token,
       user: {
         id: user.id,
         email: user.email,
         walletAddress: user.walletAddress,
-        profile: user.profile
-      }
+        profile: user.profile,
+      },
     });
+
+    response.cookies.set("block_social_jwt", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60,
+      path: "/",
+    });
+
+    return response;
   } catch (error: any) {
     console.error("Google authentication route error:", error);
     return NextResponse.json({ error: error.message || "Failed to authenticate with Google." }, { status: 500 });
