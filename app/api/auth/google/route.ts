@@ -14,35 +14,20 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanEmail = (email || "").toLowerCase().trim();
-    const effectiveName = name || cleanEmail.split("@")[0] || "Aura Member";
-    const effectiveGoogleId = googleId || supabaseId;
+    const effectiveName = name || cleanEmail.split("@")[0] || "Pulse Member";
+    const effectiveGoogleId = googleId ? String(googleId) : (supabaseId ? String(supabaseId) : "");
 
-    // 1. Find user by supabaseId, googleId, or email
+    // 1. Find user by googleId, email, or supabaseId
     let user: any = null;
     let profile: any = null;
 
-    if (supabaseId) {
-      const { data } = await supabaseServer
-        .from("User")
-        .select("*, profile:Profile(*)")
-        .or(`id.eq.${supabaseId},walletAddress.eq.${supabaseId}`)
-        .maybeSingle();
-      if (data) {
-        user = data;
-        profile = Array.isArray(data.profile) ? data.profile[0] : data.profile;
-      }
-    }
-
-    if (!user && effectiveGoogleId) {
+    if (effectiveGoogleId) {
       const { data } = await supabaseServer
         .from("User")
         .select("*, profile:Profile(*)")
         .eq("googleId", effectiveGoogleId)
         .maybeSingle();
-      if (data) {
-        user = data;
-        profile = Array.isArray(data.profile) ? data.profile[0] : data.profile;
-      }
+      if (data) user = data;
     }
 
     if (!user && cleanEmail) {
@@ -51,10 +36,16 @@ export async function POST(req: NextRequest) {
         .select("*, profile:Profile(*)")
         .eq("email", cleanEmail)
         .maybeSingle();
-      if (data) {
-        user = data;
-        profile = Array.isArray(data.profile) ? data.profile[0] : data.profile;
-      }
+      if (data) user = data;
+    }
+
+    if (!user && supabaseId) {
+      const { data } = await supabaseServer
+        .from("User")
+        .select("*, profile:Profile(*)")
+        .or(`id.eq.${supabaseId},walletAddress.eq.${supabaseId}`)
+        .maybeSingle();
+      if (data) user = data;
     }
 
     if (user) {
@@ -74,44 +65,28 @@ export async function POST(req: NextRequest) {
         if (updatedUser) user = { ...user, ...updatedUser };
       }
 
-      // Ensure profile exists
-      if (!profile) {
-        const { data: existingProfile } = await supabaseServer
+      // Check / Create profile if missing
+      const existingProfile = Array.isArray(user.profile) ? user.profile[0] : user.profile;
+      if (existingProfile) {
+        profile = existingProfile;
+      } else {
+        const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 10)}`;
+        const finalUsername = `${baseUsername || "user"}_${Math.floor(100 + Math.random() * 900)}`;
+
+        const { data: newProfile } = await supabaseServer
           .from("Profile")
-          .select("*")
-          .eq("userId", user.id)
-          .maybeSingle();
-
-        if (existingProfile) {
-          profile = existingProfile;
-        } else {
-          const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
-          let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-
-          const { data: collision } = await supabaseServer
-            .from("Profile")
-            .select("id")
-            .eq("username", finalUsername)
-            .maybeSingle();
-          if (collision) {
-            finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
-          }
-
-          const { data: newProfile } = await supabaseServer
-            .from("Profile")
-            .insert(
-              withTimestamps({
-                userId: user.id,
-                username: finalUsername,
-                displayName: effectiveName,
-                avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanEmail || user.id)}`,
-                bio: "Pulse Social Member.",
-              })
-            )
-            .select()
-            .single();
-          profile = newProfile;
-        }
+          .insert(
+            withTimestamps({
+              userId: user.id,
+              username: finalUsername,
+              displayName: effectiveName,
+              avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.id}`,
+              bio: "Pulse Social Member.",
+            })
+          )
+          .select()
+          .single();
+        profile = newProfile;
       }
     } else {
       // 2. Create brand-new user in Supabase
@@ -123,7 +98,7 @@ export async function POST(req: NextRequest) {
         .insert(
           withTimestamps({
             id: finalUserId,
-            googleId: effectiveGoogleId,
+            googleId: effectiveGoogleId || null,
             email: cleanEmail || null,
             walletAddress: finalAddress,
           })
@@ -133,39 +108,41 @@ export async function POST(req: NextRequest) {
 
       if (userErr || !newUser) {
         console.error("Supabase user creation error:", userErr);
-        throw new Error(userErr?.message || "Failed to create user in database");
-      }
-      user = newUser;
+        // Fallback: try fetching by email
+        const { data: fallbackUser } = await supabaseServer
+          .from("User")
+          .select("*, profile:Profile(*)")
+          .eq("email", cleanEmail)
+          .maybeSingle();
 
-      const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
-      let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-      const { data: collision } = await supabaseServer
-        .from("Profile")
-        .select("id")
-        .eq("username", finalUsername)
-        .maybeSingle();
-      if (collision) {
-        finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
+        if (fallbackUser) {
+          user = fallbackUser;
+        } else {
+          throw new Error(userErr?.message || "Failed to create user in database");
+        }
+      } else {
+        user = newUser;
       }
 
-      const { data: newProfile, error: profileErr } = await supabaseServer
-        .from("Profile")
-        .insert(
-          withTimestamps({
-            userId: user.id,
-            username: finalUsername,
-            displayName: effectiveName,
-            avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanEmail || finalAddress)}`,
-            bio: "Pulse Social Member.",
-          })
-        )
-        .select()
-        .single();
+      if (user) {
+        const baseUsername = `g_${effectiveName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 10)}`;
+        const finalUsername = `${baseUsername || "user"}_${Math.floor(100 + Math.random() * 900)}`;
 
-      if (profileErr) {
-        console.error("Supabase profile creation error:", profileErr);
+        const { data: newProfile } = await supabaseServer
+          .from("Profile")
+          .insert(
+            withTimestamps({
+              userId: user.id,
+              username: finalUsername,
+              displayName: effectiveName,
+              avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.id}`,
+              bio: "Pulse Social Member.",
+            })
+          )
+          .select()
+          .single();
+        profile = newProfile;
       }
-      profile = newProfile;
     }
 
     if (!user) {

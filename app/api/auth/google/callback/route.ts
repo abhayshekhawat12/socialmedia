@@ -6,12 +6,11 @@ import crypto from "crypto";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const origin = req.nextUrl.origin;
   try {
     const searchParams = req.nextUrl.searchParams;
     const code = searchParams.get("code");
     const error = searchParams.get("error");
-
-    const origin = req.nextUrl.origin;
 
     if (error || !code) {
       return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(error || "Google authentication was cancelled.")}`);
@@ -54,40 +53,73 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Failed to retrieve Google profile information.")}`);
     }
 
-    const googleId = googleUser.sub;
-    const email = googleUser.email.toLowerCase();
-    const displayName = googleUser.name || googleUser.email.split("@")[0];
+    const googleId = String(googleUser.sub);
+    const email = String(googleUser.email).toLowerCase().trim();
+    const displayName = googleUser.name || email.split("@")[0] || "Pulse Creator";
     const picture = googleUser.picture || "";
 
     // 3. Find or create user directly in Supabase
     let user: any = null;
     let profile: any = null;
 
-    // Search by googleId or email
-    const { data: existingUsers } = await supabaseServer
+    // Search by googleId first
+    const { data: userByGoogle } = await supabaseServer
       .from("User")
       .select("*, profile:Profile(*)")
-      .or(`googleId.eq.${googleId},email.eq.${email}`);
+      .eq("googleId", googleId)
+      .maybeSingle();
 
-    if (existingUsers && existingUsers.length > 0) {
-      user = existingUsers[0];
-      profile = Array.isArray(user.profile) ? user.profile[0] : user.profile;
+    if (userByGoogle) {
+      user = userByGoogle;
+    } else {
+      // Search by email
+      const { data: userByEmail } = await supabaseServer
+        .from("User")
+        .select("*, profile:Profile(*)")
+        .eq("email", email)
+        .maybeSingle();
 
-      const updateData: any = {};
-      if (!user.googleId) updateData.googleId = googleId;
-      if (!user.email) updateData.email = email;
+      if (userByEmail) {
+        user = userByEmail;
+        // Update googleId if missing
+        if (!user.googleId) {
+          await supabaseServer
+            .from("User")
+            .update(withUpdatedTimestamp({ googleId }))
+            .eq("id", user.id);
+          user.googleId = googleId;
+        }
+      }
+    }
 
-      if (Object.keys(updateData).length > 0) {
-        const { data: updated } = await supabaseServer
-          .from("User")
-          .update(withUpdatedTimestamp(updateData))
-          .eq("id", user.id)
+    if (user) {
+      // User exists — check if profile exists
+      const existingProfile = Array.isArray(user.profile) ? user.profile[0] : user.profile;
+      if (existingProfile) {
+        profile = existingProfile;
+      } else {
+        // Create missing profile for existing user
+        const baseUsername = `g_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 10)}`;
+        const finalUsername = `${baseUsername || "user"}_${Math.floor(100 + Math.random() * 900)}`;
+
+        const { data: newProfile } = await supabaseServer
+          .from("Profile")
+          .insert(
+            withTimestamps({
+              userId: user.id,
+              username: finalUsername,
+              displayName,
+              avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.id}`,
+              bio: "Pulse Creator",
+            })
+          )
           .select()
           .single();
-        if (updated) user = { ...user, ...updated };
+        profile = newProfile;
       }
     } else {
-      const hash = crypto.createHash("sha256").update(`google:${googleId}`).digest("hex");
+      // Brand new user creation
+      const hash = crypto.createHash("sha256").update(`google:${googleId}:${email}`).digest("hex");
       const userIdentifier = `usr_${hash.slice(0, 16)}`;
       const newUserId = crypto.randomUUID();
 
@@ -106,38 +138,46 @@ export async function GET(req: NextRequest) {
 
       if (userErr || !newUser) {
         console.error("User creation error:", userErr);
-        return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Failed to create user profile in database.")}`);
+        // Fallback: try fetching by email in case of race condition
+        const { data: fallbackUser } = await supabaseServer
+          .from("User")
+          .select("*, profile:Profile(*)")
+          .eq("email", email)
+          .maybeSingle();
+
+        if (fallbackUser) {
+          user = fallbackUser;
+        } else {
+          return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(userErr?.message || "Failed to create user profile in database.")}`);
+        }
+      } else {
+        user = newUser;
       }
-      user = newUser;
 
-      const baseUsername = `g_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
-      let finalUsername = baseUsername;
+      if (user) {
+        const baseUsername = `g_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 10)}`;
+        const finalUsername = `${baseUsername || "user"}_${Math.floor(100 + Math.random() * 900)}`;
 
-      const { data: usernameCollision } = await supabaseServer
-        .from("Profile")
-        .select("id")
-        .eq("username", finalUsername)
-        .maybeSingle();
+        const { data: newProfile } = await supabaseServer
+          .from("Profile")
+          .insert(
+            withTimestamps({
+              userId: user.id,
+              username: finalUsername,
+              displayName,
+              avatarUrl: picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.id}`,
+              bio: "Pulse Creator",
+            })
+          )
+          .select()
+          .single();
 
-      if (usernameCollision) {
-        finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
+        profile = newProfile;
       }
+    }
 
-      const { data: newProfile } = await supabaseServer
-        .from("Profile")
-        .insert(
-          withTimestamps({
-            userId: user.id,
-            username: finalUsername,
-            displayName,
-            avatarUrl: picture,
-            bio: "Pulse Creator",
-          })
-        )
-        .select()
-        .single();
-
-      profile = newProfile;
+    if (!user) {
+      return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Could not complete authentication.")}`);
     }
 
     // 4. Sign JWT session and set secure cookie
@@ -155,6 +195,6 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (err: any) {
     console.error("[Google OAuth Callback Error]", err);
-    return NextResponse.redirect(`${req.nextUrl.origin}/login?error=${encodeURIComponent(err.message || "Failed to complete Google login.")}`);
+    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(err.message || "Failed to complete Google login.")}`);
   }
 }
