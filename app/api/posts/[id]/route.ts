@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import fs from "fs";
-import path from "path";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -10,55 +8,41 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const post = await prisma.post.update({
-      where: { id: params.id },
-      data: { viewsCount: { increment: 1 } },
-      include: {
-        likes: true,
-        savedPosts: true,
-        comments: {
-          orderBy: { createdAt: "asc" },
-        },
-      },
-    });
+    const postId = params.id;
 
-    if (!post) {
+    // Fetch post with likes, savedPosts, comments
+    const { data: post, error } = await supabaseServer
+      .from("Post")
+      .select(`
+        *,
+        likes:Like(*),
+        savedPosts:SavedPost(*),
+        comments:Comment(*)
+      `)
+      .eq("id", postId)
+      .single();
+
+    if (error || !post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    const authorProfile = await prisma.profile.findFirst({
-      where: {
-        user: { walletAddress: post.authorAddress },
-      },
-      include: { user: true },
-    });
+    // Increment views
+    await supabaseServer
+      .from("Post")
+      .update({ viewsCount: (post.viewsCount || 0) + 1 })
+      .eq("id", postId);
 
-    // Populate commenter profiles
-    const commenterAddresses = Array.from(new Set(post.comments.map((c) => c.authorAddress)));
-    const commenterProfiles = await prisma.profile.findMany({
-      where: {
-        user: { walletAddress: { in: commenterAddresses } },
-      },
-      include: { user: true },
-    });
-
-    const enrichedComments = post.comments.map((comment) => {
-      const p = commenterProfiles.find((pr) => pr.user?.walletAddress === comment.authorAddress);
-      return {
-        ...comment,
-        authorProfile: p || {
-          username: `user_${comment.authorAddress.slice(0, 8)}`,
-          displayName: `User ${comment.authorAddress.slice(0, 6)}`,
-          avatarUrl: "",
-        },
-      };
-    });
+    // Fetch author profile
+    const { data: authorProfile } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .or(`username.eq.${post.authorAddress}`)
+      .maybeSingle();
 
     return NextResponse.json({
       success: true,
       post: {
         ...post,
-        comments: enrichedComments,
         authorProfile: authorProfile || {
           username: `user_${post.authorAddress.slice(0, 8)}`,
           displayName: `Creator ${post.authorAddress.slice(0, 6)}`,
@@ -71,7 +55,6 @@ export async function GET(
   }
 }
 
-// DELETE /api/posts/[id]?userAddress=...
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -85,9 +68,11 @@ export async function DELETE(
       return NextResponse.json({ error: "userAddress and postId required" }, { status: 400 });
     }
 
-    const post = await prisma.post.findUnique({
-      where: { id: postId },
-    });
+    const { data: post } = await supabaseServer
+      .from("Post")
+      .select("*")
+      .eq("id", postId)
+      .single();
 
     if (!post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
@@ -97,22 +82,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized to delete this post" }, { status: 403 });
     }
 
-    // Try deleting media from disk if it was stored locally in public/uploads
-    if (post.mediaUrl && post.mediaUrl.startsWith("/uploads/")) {
-      try {
-        const filePath = path.join(process.cwd(), "public", post.mediaUrl);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (fileErr) {
-        console.warn("Could not delete file from disk:", fileErr);
-      }
-    }
-
-    // Delete post record (cascade deletes likes, comments, savedPosts, shares, views)
-    await prisma.post.delete({
-      where: { id: postId },
-    });
+    // Delete post
+    await supabaseServer
+      .from("Post")
+      .delete()
+      .eq("id", postId);
 
     return NextResponse.json({
       success: true,

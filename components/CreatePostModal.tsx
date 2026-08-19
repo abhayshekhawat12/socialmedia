@@ -25,7 +25,7 @@ import { appCache } from "../lib/cache";
 export function CreatePostModal() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { account } = useAuth();
+  const { account, user } = useAuth();
 
   // Stepper state: upload -> enhance -> publish
   const [creationStep, setCreationStep] = useState<"upload" | "enhance" | "publish">("upload");
@@ -85,7 +85,11 @@ export function CreatePostModal() {
     e.preventDefault();
     if (!file) return;
 
-    const currentAuthor = account || "0x2db4b41ce192d3daaacbd23e87690c3d024c9e7e";
+    const currentAuthor = user?.walletAddress || user?.id || account;
+    if (!currentAuthor) {
+      router.push("/login");
+      return;
+    }
 
     try {
       setIsUploading(true);

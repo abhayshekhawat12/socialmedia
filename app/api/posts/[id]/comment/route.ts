@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(
   req: NextRequest,
@@ -15,36 +17,53 @@ export async function POST(
     const normalizedAuthor = authorAddress.toLowerCase();
     const postId = params.id;
 
-    const comment = await prisma.comment.create({
-      data: {
-        postId,
-        authorAddress: normalizedAuthor,
-        content,
-      },
-    });
+    const { data: comment, error: commentErr } = await supabaseServer
+      .from("Comment")
+      .insert(
+        withTimestamps({
+          postId,
+          authorAddress: normalizedAuthor,
+          content,
+        })
+      )
+      .select()
+      .single();
 
-    const post = await prisma.post.update({
-      where: { id: postId },
-      data: { commentCount: { increment: 1 } },
-    });
+    if (commentErr || !comment) {
+      throw new Error(commentErr?.message || "Failed to create comment");
+    }
 
-    // Send notification to post author
-    if (post.authorAddress !== normalizedAuthor) {
-      await prisma.notification.create({
-        data: {
+    const { data: post } = await supabaseServer
+      .from("Post")
+      .select("id, authorAddress, commentCount")
+      .eq("id", postId)
+      .single();
+
+    const newCommentCount = (post?.commentCount || 0) + 1;
+    await supabaseServer
+      .from("Post")
+      .update({ commentCount: newCommentCount })
+      .eq("id", postId);
+
+    // Send notification
+    if (post && post.authorAddress !== normalizedAuthor) {
+      await supabaseServer.from("Notification").insert(
+        withTimestamps({
           recipientAddress: post.authorAddress,
           senderAddress: normalizedAuthor,
           type: "COMMENT",
           title: "New Comment",
           message: `User ${normalizedAuthor.slice(0, 6)}... commented on your post`,
           link: `/post/${postId}`,
-        },
-      });
+        })
+      );
     }
 
-    const authorProfile = await prisma.profile.findFirst({
-      where: { user: { walletAddress: normalizedAuthor } },
-    });
+    const { data: authorProfile } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .or(`username.eq.${normalizedAuthor}`)
+      .maybeSingle();
 
     return NextResponse.json({
       success: true,
@@ -56,7 +75,7 @@ export async function POST(
           avatarUrl: "",
         },
       },
-      commentCount: post.commentCount,
+      commentCount: newCommentCount,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || "Comment creation failed" }, { status: 500 });

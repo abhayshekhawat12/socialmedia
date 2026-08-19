@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
-import { prisma } from "@/lib/prisma";
-import { supabase } from "@/lib/supabase";
+import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,57 +23,44 @@ export async function POST(req: NextRequest) {
 
     let mediaUrl = "";
 
-    // 1. Try local disk upload (works on local Node.js environment)
+    // 1. Try Supabase Storage bucket 'uploads'
     try {
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
-      await fs.mkdir(uploadDir, { recursive: true });
-      const filePath = path.join(uploadDir, fileName);
-      await fs.writeFile(filePath, buffer);
-      mediaUrl = `/uploads/${fileName}`;
-    } catch (fsErr) {
-      console.warn("Local filesystem write not available (serverless environment), falling back to Supabase/Memory:", fsErr);
+      const { error: uploadError } = await supabaseServer.storage
+        .from("uploads")
+        .upload(fileName, buffer, {
+          contentType: file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png"),
+          upsert: true,
+        });
 
-      // 2. Try Supabase Storage bucket 'uploads' if available
-      try {
-        const { error: uploadError } = await supabase.storage
-          .from("uploads")
-          .upload(fileName, buffer, {
-            contentType: file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png"),
-            upsert: true,
-          });
-
-        if (!uploadError) {
-          const { data: publicData } = supabase.storage.from("uploads").getPublicUrl(fileName);
-          if (publicData?.publicUrl) {
-            mediaUrl = publicData.publicUrl;
-          }
+      if (!uploadError) {
+        const { data: publicData } = supabaseServer.storage.from("uploads").getPublicUrl(fileName);
+        if (publicData?.publicUrl) {
+          mediaUrl = publicData.publicUrl;
         }
-      } catch (supabaseErr) {
-        console.warn("Supabase Storage bucket upload warning:", supabaseErr);
       }
-
-      // 3. Robust Base64 Data URL fallback for immediate guaranteed rendering
-      if (!mediaUrl) {
-        const mime = file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png");
-        mediaUrl = `data:${mime};base64,${buffer.toString("base64")}`;
-      }
+    } catch (storageErr) {
+      console.warn("Supabase Storage bucket notice:", storageErr);
     }
 
-    // Save media record to PostgreSQL database
+    // 2. Base64 Data URL fallback for guaranteed display
+    if (!mediaUrl) {
+      const mime = file.type || (file.type.startsWith("video/") ? "video/mp4" : "image/png");
+      mediaUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+    }
+
+    // 3. Save media record to Supabase table
     try {
-      await prisma.media.upsert({
-        where: { cid: mockCid },
-        create: {
+      await supabaseServer.from("Media").upsert(
+        withTimestamps({
           cid: mockCid,
           url: mediaUrl,
           fileType: file.type.startsWith("video/") ? "video" : "image",
           fileSize: file.size,
           mimeType: file.type || "image/png",
-        },
-        update: { url: mediaUrl },
-      });
+        })
+      );
     } catch (dbErr) {
-      console.warn("Prisma media recording warning:", dbErr);
+      console.warn("Media record notice:", dbErr);
     }
 
     return NextResponse.json({

@@ -17,9 +17,34 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Redirect root / to /feed directly
+  const token = request.cookies.get("block_social_jwt")?.value;
+  const isAuthenticated = Boolean(token && token.length > 10);
+
+  // 2. Starting Root Route `/`
   if (pathname === "/") {
-    return NextResponse.redirect(new URL("/feed", request.url));
+    if (isAuthenticated) {
+      return NextResponse.redirect(new URL("/feed", request.url));
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // 3. Prevent logged-in users from seeing /login
+  if (pathname === "/login") {
+    if (isAuthenticated) {
+      return NextResponse.redirect(new URL("/feed", request.url));
+    }
+    return NextResponse.next();
+  }
+
+  // 4. OAuth callback route is public
+  if (pathname.startsWith("/auth/callback")) {
+    return NextResponse.next();
+  }
+
+  // 5. Protected Routes: Require active authentication
+  if (!isAuthenticated) {
+    const loginUrl = new URL("/login", request.url);
+    return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
