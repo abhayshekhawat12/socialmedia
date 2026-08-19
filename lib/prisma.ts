@@ -1,19 +1,34 @@
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+declare global {
+  // eslint-disable-next-line no-var
+  var prisma: PrismaClient | undefined;
+}
+
+const prismaClientSingleton = (): PrismaClient => {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl || dbUrl.trim() === "") {
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[Prisma Error] DATABASE_URL is not set or is empty in production environment. Please configure DATABASE_URL in your Vercel project environment variables."
+      );
+    }
+  }
+
+  return new PrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
 };
 
 export const getPrismaClient = (): PrismaClient => {
-  if (!globalForPrisma.prisma) {
-    globalForPrisma.prisma = new PrismaClient({
-      log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-    });
+  if (!globalThis.prisma) {
+    globalThis.prisma = prismaClientSingleton();
   }
-  return globalForPrisma.prisma;
+  return globalThis.prisma;
 };
 
-// Lazy Proxy: prevents instantiating PrismaClient at module-eval / build time
+// Lazy proxy: ensures PrismaClient is only instantiated at runtime on demand,
+// avoiding early initialization errors during Next.js build-time static evaluation.
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop: keyof PrismaClient) {
     const client = getPrismaClient();
@@ -24,4 +39,7 @@ export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
     return value;
   },
 });
+
+export default prisma;
+
 
