@@ -5,10 +5,11 @@ const supabaseUrl =
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-// Create Supabase client — if anon key is empty, the client will only work for
-// non-authenticated operations. The primary auth flow uses Direct Google OAuth
-// via /api/auth/google/callback which doesn't need Supabase Auth SDK.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey || "placeholder", {
+/**
+ * Client-side Supabase client using public Anon Key.
+ * Handles auth state, token refreshes, and client-side listeners.
+ */
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,

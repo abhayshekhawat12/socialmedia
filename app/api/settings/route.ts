@@ -1,51 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const address = searchParams.get("walletAddress")?.toLowerCase();
+  try {
+    const { searchParams } = new URL(req.url);
+    const address = searchParams.get("walletAddress")?.toLowerCase();
 
-  if (!address) {
-    return NextResponse.json({ error: "Address required" }, { status: 400 });
-  }
+    if (!address) {
+      return NextResponse.json({ error: "Address required" }, { status: 400 });
+    }
 
-  let settings = await prisma.userSettings.findUnique({
-    where: { walletAddress: address },
-  });
+    let { data: settings } = await supabaseServer
+      .from("UserSettings")
+      .select("*")
+      .eq("walletAddress", address)
+      .maybeSingle();
 
-  if (!settings) {
-    settings = await prisma.userSettings.create({
-      data: { walletAddress: address },
+    if (!settings) {
+      const { data: newSettings } = await supabaseServer
+        .from("UserSettings")
+        .insert({ walletAddress: address })
+        .select()
+        .single();
+      settings = newSettings;
+    }
+
+    const { data: blockedAccounts } = await supabaseServer
+      .from("BlockedAccount")
+      .select("*")
+      .eq("blockerAddress", address);
+
+    const { data: sessions } = await supabaseServer
+      .from("UserSession")
+      .select("*")
+      .eq("walletAddress", address)
+      .order("lastActive", { ascending: false });
+
+    return NextResponse.json({
+      settings: settings || {},
+      blockedAccounts: blockedAccounts || [],
+      sessions: sessions || [],
     });
+  } catch (err: any) {
+    console.error("Settings GET error:", err);
+    return NextResponse.json({ error: err.message || "Failed to fetch settings" }, { status: 500 });
   }
-
-  const blockedAccounts = await prisma.blockedAccount.findMany({
-    where: { blockerAddress: address },
-  });
-
-  const sessions = await prisma.userSession.findMany({
-    where: { walletAddress: address },
-    orderBy: { lastActive: "desc" },
-  });
-
-  if (sessions.length === 0) {
-    await prisma.userSession.create({
-      data: {
-        walletAddress: address,
-        deviceName: "Chrome on Windows 11 (Current)",
-        location: "Mumbai, India",
-        isCurrent: true,
-      },
-    });
-  }
-
-  return NextResponse.json({
-    settings,
-    blockedAccounts,
-    sessions,
-  });
 }
 
 export async function PUT(req: NextRequest) {
@@ -65,53 +66,39 @@ export async function PUT(req: NextRequest) {
       }
 
       if (action === "block") {
-        await prisma.blockedAccount.upsert({
-          where: {
-            blockerAddress_blockedAddress_type: {
-              blockerAddress: address,
-              blockedAddress: targetAddress.toLowerCase(),
-              type: blockType || "block",
-            },
-          },
-          create: {
-            blockerAddress: address,
-            blockedAddress: targetAddress.toLowerCase(),
-            type: blockType || "block",
-          },
-          update: {
-            type: blockType || "block",
-          },
+        await supabaseServer.from("BlockedAccount").upsert({
+          blockerAddress: address,
+          blockedAddress: targetAddress.toLowerCase(),
+          type: blockType || "block",
         });
       } else {
-        await prisma.blockedAccount.deleteMany({
-          where: {
-            blockerAddress: address,
-            blockedAddress: targetAddress.toLowerCase(),
-            type: blockType || "block",
-          },
-        });
+        await supabaseServer
+          .from("BlockedAccount")
+          .delete()
+          .eq("blockerAddress", address)
+          .eq("blockedAddress", targetAddress.toLowerCase());
       }
 
-      const blockedAccounts = await prisma.blockedAccount.findMany({
-        where: { blockerAddress: address },
-      });
+      const { data: blockedAccounts } = await supabaseServer
+        .from("BlockedAccount")
+        .select("*")
+        .eq("blockerAddress", address);
 
-      return NextResponse.json({ success: true, blockedAccounts });
+      return NextResponse.json({ success: true, blockedAccounts: blockedAccounts || [] });
     }
 
-    const updatedSettings = await prisma.userSettings.upsert({
-      where: { walletAddress: address },
-      create: {
+    const { data: updatedSettings } = await supabaseServer
+      .from("UserSettings")
+      .upsert({
         walletAddress: address,
         ...settingsData,
-      },
-      update: {
-        ...settingsData,
-      },
-    });
+      })
+      .select()
+      .single();
 
     return NextResponse.json({ success: true, settings: updatedSettings });
   } catch (error: any) {
+    console.error("Settings PUT error:", error);
     return NextResponse.json({ error: error.message || "Failed to save settings" }, { status: 500 });
   }
 }

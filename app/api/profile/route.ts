@@ -1,124 +1,138 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 import { verifyAuthToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const rawAddress = searchParams.get("walletAddress") || "";
-  const address = rawAddress.toLowerCase().trim();
+  try {
+    const { searchParams } = new URL(req.url);
+    const rawAddress = searchParams.get("walletAddress") || "";
+    const address = rawAddress.toLowerCase().trim();
 
-  if (!address) {
-    return NextResponse.json({ error: "Address required" }, { status: 400 });
-  }
+    if (!address) {
+      return NextResponse.json({ error: "Address required" }, { status: 400 });
+    }
 
-  let profile = await prisma.profile.findFirst({
-    where: {
-      OR: [
-        { user: { walletAddress: address } },
-        { user: { walletAddress: rawAddress } },
-        { user: { id: address } },
-        { user: { id: rawAddress } },
-        { user: { email: address } },
-        { user: { googleId: address } },
-        { user: { googleId: rawAddress } },
-        { username: address },
-      ],
-    },
-    include: {
-      user: true,
-    },
-  });
+    // Find profile or user
+    let profile: any = null;
+    let user: any = null;
 
-  // If profile not found, check if this is an authenticated user requesting their profile
-  if (!profile) {
-    const cookieToken = req.cookies.get("block_social_jwt")?.value;
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace("Bearer ", "") || cookieToken;
+    // Search by username or user relations
+    const { data: profileByUsername } = await supabaseServer
+      .from("Profile")
+      .select("*, user:User(*)")
+      .eq("username", address)
+      .maybeSingle();
 
-    if (token) {
-      const session = verifyAuthToken(token);
-      if (session && (session.userId === rawAddress || session.email?.toLowerCase() === address || session.walletAddress === rawAddress)) {
-        // Auto-provision user & profile
-        try {
+    if (profileByUsername) {
+      profile = profileByUsername;
+      user = profileByUsername.user;
+    } else {
+      const { data: userRecord } = await supabaseServer
+        .from("User")
+        .select("*, profile:Profile(*)")
+        .or(`id.eq.${rawAddress},walletAddress.eq.${rawAddress},walletAddress.eq.${address},email.eq.${address}`)
+        .maybeSingle();
+
+      if (userRecord) {
+        user = userRecord;
+        profile = Array.isArray(userRecord.profile) ? userRecord.profile[0] : userRecord.profile;
+      }
+    }
+
+    // Auto-provision fallback if authenticated user
+    if (!profile) {
+      const cookieToken = req.cookies.get("block_social_jwt")?.value;
+      const authHeader = req.headers.get("authorization");
+      const token = authHeader?.replace("Bearer ", "") || cookieToken;
+
+      if (token) {
+        const session = verifyAuthToken(token);
+        if (session && (session.userId === rawAddress || session.email?.toLowerCase() === address || session.walletAddress === rawAddress)) {
           const isEmail = address.includes("@");
           const displayName = session.name || (isEmail ? address.split("@")[0] : `User_${rawAddress.slice(0, 6)}`);
           const baseUsername = `u_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
           let finalUsername = baseUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
 
-          let collision = await prisma.profile.findUnique({ where: { username: finalUsername } });
-          while (collision) {
+          const { data: collision } = await supabaseServer
+            .from("Profile")
+            .select("id")
+            .eq("username", finalUsername)
+            .maybeSingle();
+          if (collision) {
             finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
-            collision = await prisma.profile.findUnique({ where: { username: finalUsername } });
           }
 
-          const newUser = await prisma.user.upsert({
-            where: { id: session.userId || rawAddress },
-            update: {
-              email: session.email?.toLowerCase() || (isEmail ? address : undefined),
+          const newUserId = session.userId || rawAddress;
+          const { data: newUser } = await supabaseServer
+            .from("User")
+            .upsert({
+              id: newUserId,
               walletAddress: session.walletAddress || rawAddress,
-            },
-            create: {
-              id: session.userId || rawAddress,
-              walletAddress: session.walletAddress || rawAddress,
-              email: session.email?.toLowerCase() || (isEmail ? address : undefined),
-              profile: {
-                create: {
-                  username: finalUsername,
-                  displayName,
-                  avatarUrl: session.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(address)}`,
-                  bio: "Pulse Social Member.",
-                },
-              },
-            },
-            include: { profile: true },
-          });
+              email: session.email?.toLowerCase() || (isEmail ? address : null),
+            })
+            .select()
+            .single();
 
-          if (newUser && newUser.profile) {
-            profile = {
-              ...newUser.profile,
-              user: newUser,
-            };
+          if (newUser) {
+            user = newUser;
+            const { data: newProfile } = await supabaseServer
+              .from("Profile")
+              .insert({
+                userId: user.id,
+                username: finalUsername,
+                displayName,
+                avatarUrl: session.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(address)}`,
+                bio: "Pulse Social Member.",
+              })
+              .select()
+              .single();
+            profile = newProfile;
           }
-        } catch (autoErr) {
-          console.warn("Auto profile provision notice:", autoErr);
         }
       }
     }
-  }
 
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  const targetIdentifier = profile.user.walletAddress || profile.user.id;
-
-  const [followersCount, followingCount, postsCount] = await Promise.all([
-    prisma.follow.count({ where: { followingAddress: targetIdentifier } }),
-    prisma.follow.count({ where: { followerAddress: targetIdentifier } }),
-    prisma.post.count({ where: { authorAddress: targetIdentifier } }),
-  ]);
-
-  return NextResponse.json(
-    {
-      profile: {
-        ...profile,
-        nickname: profile.nickname || "",
-      },
-      user: profile.user,
-      stats: {
-        followersCount,
-        followingCount,
-        postsCount,
-      },
-    },
-    {
-      headers: {
-        "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
-      },
+    if (!profile || !user) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     }
-  );
+
+    const targetIdentifier = user.walletAddress || user.id;
+
+    const [
+      { count: followersCount },
+      { count: followingCount },
+      { count: postsCount },
+    ] = await Promise.all([
+      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).eq("followingAddress", targetIdentifier),
+      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).eq("followerAddress", targetIdentifier),
+      supabaseServer.from("Post").select("*", { count: "exact", head: true }).eq("authorAddress", targetIdentifier),
+    ]);
+
+    return NextResponse.json(
+      {
+        profile: {
+          ...profile,
+          nickname: profile.nickname || "",
+        },
+        user,
+        stats: {
+          followersCount: followersCount || 0,
+          followingCount: followingCount || 0,
+          postsCount: postsCount || 0,
+        },
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error("Profile GET error:", error);
+    return NextResponse.json({ error: error.message || "Failed to fetch profile" }, { status: 500 });
+  }
 }
 
 export async function PUT(req: NextRequest) {
@@ -143,16 +157,11 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Wallet address or session required" }, { status: 400 });
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { walletAddress },
-          { id: walletAddress },
-          { email: walletAddress.toLowerCase() },
-        ],
-      },
-      include: { profile: true },
-    });
+    const { data: user } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`id.eq.${walletAddress},walletAddress.eq.${walletAddress},email.eq.${walletAddress.toLowerCase()}`)
+      .maybeSingle();
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
@@ -163,27 +172,46 @@ export async function PUT(req: NextRequest) {
     if (bio !== undefined) updateData.bio = bio;
     if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
     if (bannerUrl !== undefined) updateData.bannerUrl = bannerUrl;
+
     if (username !== undefined) {
-      // Check username uniqueness
-      const existing = await prisma.profile.findUnique({ where: { username } });
+      const { data: existing } = await supabaseServer
+        .from("Profile")
+        .select("userId")
+        .eq("username", username)
+        .maybeSingle();
+
       if (existing && existing.userId !== user.id) {
         return NextResponse.json({ error: "Username already taken" }, { status: 400 });
       }
       updateData.username = username;
     }
 
-    const updatedProfile = await prisma.profile.upsert({
-      where: { userId: user.id },
-      update: updateData,
-      create: {
-        userId: user.id,
-        username: username || `user_${user.id.slice(0, 8)}`,
-        displayName: displayName || "Pulse Creator",
-        bio: bio || "",
-        avatarUrl: avatarUrl || "",
-        bannerUrl: bannerUrl || "",
-      },
-    });
+    let updatedProfile: any = null;
+    const existingProfile = Array.isArray(user.profile) ? user.profile[0] : user.profile;
+
+    if (existingProfile) {
+      const { data: p } = await supabaseServer
+        .from("Profile")
+        .update(updateData)
+        .eq("userId", user.id)
+        .select()
+        .single();
+      updatedProfile = p;
+    } else {
+      const { data: p } = await supabaseServer
+        .from("Profile")
+        .insert({
+          userId: user.id,
+          username: username || `user_${user.id.slice(0, 8)}`,
+          displayName: displayName || "Pulse Creator",
+          bio: bio || "",
+          avatarUrl: avatarUrl || "",
+          bannerUrl: bannerUrl || "",
+        })
+        .select()
+        .single();
+      updatedProfile = p;
+    }
 
     return NextResponse.json({
       success: true,

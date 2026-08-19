@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 import { verifyAuthToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -19,16 +19,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 });
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: session.userId },
-          { walletAddress: session.walletAddress },
-          { email: session.walletAddress },
-        ],
-      },
-      include: { profile: true },
-    });
+    let user: any = null;
+    let profile: any = null;
+
+    const { data } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`id.eq.${session.userId},walletAddress.eq.${session.walletAddress || session.userId}`)
+      .maybeSingle();
+
+    if (data) {
+      user = data;
+      profile = Array.isArray(data.profile) ? data.profile[0] : data.profile;
+    }
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
@@ -37,7 +40,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       user,
-      profile: user.profile,
+      profile,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || "Failed to fetch session user" }, { status: 500 });

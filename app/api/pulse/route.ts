@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -12,77 +12,63 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "15", 10);
 
-    const where: any = {};
-    if (author) {
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { walletAddress: author },
-            { id: author },
-            { email: author },
-          ],
-        },
-      });
+    let query = supabaseServer
+      .from("Pulse")
+      .select(`
+        *,
+        audio:Audio(*),
+        likes:Like(userAddress),
+        savedPulses:SavedPulse(userAddress)
+      `)
+      .range((page - 1) * limit, page * limit);
 
-      if (user) {
-        where.OR = [
-          { authorAddress: user.walletAddress || "" },
-          { authorAddress: user.id },
-          { authorAddress: author },
-        ];
-      } else {
-        where.authorAddress = author;
-      }
+    if (tab === "trending") {
+      query = query.order("pulseScore", { ascending: false });
+    } else {
+      query = query.order("createdAt", { ascending: false });
     }
 
-    const pulses = await prisma.pulse.findMany({
-      where,
-      orderBy: tab === "trending" ? { pulseScore: "desc" } : { createdAt: "desc" },
-      skip: (page - 1) * limit,
-      take: limit + 1,
-      include: {
-        audio: true,
-        likes: {
-          select: { userAddress: true },
-        },
-        savedPulses: {
-          select: { userAddress: true },
-        },
-      },
-    });
+    if (author) {
+      query = query.eq("authorAddress", author);
+    }
 
-    const hasMore = pulses.length > limit;
-    const paginatedPulses = hasMore ? pulses.slice(0, limit) : pulses;
+    const { data: pulses, error } = await query;
 
-    // Enrich each pulse with profile info
-    const authorIdentifiers = Array.from(new Set(paginatedPulses.map((p) => p.authorAddress.toLowerCase())));
-    const profiles = authorIdentifiers.length > 0
-      ? await prisma.profile.findMany({
-          where: {
-            OR: [
-              { user: { walletAddress: { in: authorIdentifiers } } },
-              { user: { id: { in: authorIdentifiers } } },
-              { user: { email: { in: authorIdentifiers } } },
-            ],
-          },
-          select: {
-            username: true,
-            displayName: true,
-            avatarUrl: true,
-            user: { select: { walletAddress: true, id: true, email: true } },
-          },
-        })
-      : [];
+    if (error) {
+      console.error("Supabase pulse fetch error:", error);
+      throw new Error(error.message);
+    }
+
+    const pulseList = pulses || [];
+    const hasMore = pulseList.length > limit;
+    const paginatedPulses = hasMore ? pulseList.slice(0, limit) : pulseList;
+
+    // Fetch author profiles
+    const authorIdentifiers = Array.from(
+      new Set(paginatedPulses.map((p) => (p.authorAddress || "").toLowerCase()))
+    ).filter(Boolean);
+
+    let profiles: any[] = [];
+    if (authorIdentifiers.length > 0) {
+      const { data: profileData } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profileData || [];
+    }
 
     const profileMap = new Map<string, any>();
     for (const pr of profiles) {
-      if (pr.user.walletAddress) profileMap.set(pr.user.walletAddress.toLowerCase(), pr);
-      if (pr.user.id) profileMap.set(pr.user.id.toLowerCase(), pr);
-      if (pr.user.email) profileMap.set(pr.user.email.toLowerCase(), pr);
+      if (pr.user) {
+        if (pr.user.walletAddress) profileMap.set(pr.user.walletAddress.toLowerCase(), pr);
+        if (pr.user.id) profileMap.set(pr.user.id.toLowerCase(), pr);
+        if (pr.user.email) profileMap.set(pr.user.email.toLowerCase(), pr);
+      }
+      if (pr.userId) profileMap.set(pr.userId.toLowerCase(), pr);
+      if (pr.username) profileMap.set(pr.username.toLowerCase(), pr);
     }
 
     const enrichedPulses = paginatedPulses.map((p) => {
-      const authorKey = p.authorAddress.toLowerCase();
+      const authorKey = (p.authorAddress || "").toLowerCase();
       const prof = profileMap.get(authorKey);
       return {
         ...p,
@@ -142,37 +128,42 @@ export async function POST(req: NextRequest) {
     const normalizedAuthor = authorAddress.toLowerCase();
 
     // Ensure user exists
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { walletAddress: normalizedAuthor },
-          { id: normalizedAuthor },
-          { email: normalizedAuthor },
-        ],
-      },
-      include: { profile: true },
-    });
+    let user: any = null;
+    const { data: existingUser } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`walletAddress.eq.${normalizedAuthor},id.eq.${normalizedAuthor},email.eq.${normalizedAuthor}`)
+      .maybeSingle();
 
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
+    if (existingUser) {
+      user = existingUser;
+    } else {
+      const newUserId = crypto.randomUUID();
+      const { data: newUser } = await supabaseServer
+        .from("User")
+        .insert({
+          id: newUserId,
           walletAddress: normalizedAuthor,
-          profile: {
-            create: {
-              username: `user_${normalizedAuthor.slice(0, 8)}`,
-              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
-            },
-          },
-        },
-        include: { profile: true },
-      });
+        })
+        .select()
+        .single();
+
+      if (newUser) {
+        user = newUser;
+        await supabaseServer.from("Profile").insert({
+          userId: newUser.id,
+          username: `user_${normalizedAuthor.slice(0, 8)}`,
+          displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+        });
+      }
     }
 
-    const finalAuthorAddress = user.walletAddress || user.id || normalizedAuthor;
+    const finalAuthorAddress = user?.walletAddress || user?.id || normalizedAuthor;
     const pulseScore = Math.floor(Math.random() * 15) + 85;
 
-    const newPulse = await prisma.pulse.create({
-      data: {
+    const { data: newPulse, error: pulseErr } = await supabaseServer
+      .from("Pulse")
+      .insert({
         authorAddress: finalAuthorAddress,
         videoUrl,
         videoCid,
@@ -190,18 +181,12 @@ export async function POST(req: NextRequest) {
         remixOfId: remixOfId || null,
         pulseScore,
         authenticScore: 96,
-      },
-    });
+      })
+      .select()
+      .single();
 
-    if (audioId) {
-      try {
-        await prisma.audio.update({
-          where: { id: audioId },
-          data: { useCount: { increment: 1 } },
-        });
-      } catch (err) {
-        console.warn("Failed to increment audio usage count:", err);
-      }
+    if (pulseErr || !newPulse) {
+      throw new Error(pulseErr?.message || "Failed to create Pulse");
     }
 
     return NextResponse.json({ success: true, pulse: newPulse });
@@ -221,45 +206,58 @@ export async function PUT(req: NextRequest) {
     }
 
     if (action === "like") {
-      const pulse = await prisma.pulse.update({
-        where: { id: pulseId },
-        data: { likeCount: { increment: 1 } },
-      });
-      return NextResponse.json({ success: true, pulse });
+      const { data: pulse } = await supabaseServer
+        .from("Pulse")
+        .select("likeCount")
+        .eq("id", pulseId)
+        .single();
+      const currentCount = pulse?.likeCount || 0;
+      const { data: updated } = await supabaseServer
+        .from("Pulse")
+        .update({ likeCount: currentCount + 1 })
+        .eq("id", pulseId)
+        .select()
+        .single();
+      return NextResponse.json({ success: true, pulse: updated });
     }
 
     if (action === "save") {
       if (userAddress) {
-        await prisma.savedPulse.upsert({
-          where: {
-            userAddress_pulseId: {
-              userAddress: userAddress.toLowerCase(),
-              pulseId,
-            },
-          },
-          create: {
-            userAddress: userAddress.toLowerCase(),
-            pulseId,
-            folder: folder || "Favorites",
-          },
-          update: {
-            folder: folder || "Favorites",
-          },
+        await supabaseServer.from("SavedPulse").upsert({
+          userAddress: userAddress.toLowerCase(),
+          pulseId,
+          folder: folder || "Favorites",
         });
       }
-      const pulse = await prisma.pulse.update({
-        where: { id: pulseId },
-        data: { saveCount: { increment: 1 } },
-      });
-      return NextResponse.json({ success: true, pulse });
+      const { data: pulse } = await supabaseServer
+        .from("Pulse")
+        .select("saveCount")
+        .eq("id", pulseId)
+        .single();
+      const currentCount = pulse?.saveCount || 0;
+      const { data: updated } = await supabaseServer
+        .from("Pulse")
+        .update({ saveCount: currentCount + 1 })
+        .eq("id", pulseId)
+        .select()
+        .single();
+      return NextResponse.json({ success: true, pulse: updated });
     }
 
     if (action === "share") {
-      const pulse = await prisma.pulse.update({
-        where: { id: pulseId },
-        data: { shareCount: { increment: 1 } },
-      });
-      return NextResponse.json({ success: true, pulse });
+      const { data: pulse } = await supabaseServer
+        .from("Pulse")
+        .select("shareCount")
+        .eq("id", pulseId)
+        .single();
+      const currentCount = pulse?.shareCount || 0;
+      const { data: updated } = await supabaseServer
+        .from("Pulse")
+        .update({ shareCount: currentCount + 1 })
+        .eq("id", pulseId)
+        .select()
+        .single();
+      return NextResponse.json({ success: true, pulse: updated });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });

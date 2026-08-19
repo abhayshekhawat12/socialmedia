@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer, withTimestamps, withUpdatedTimestamp } from "@/lib/supabaseServer";
 import { signAuthToken } from "@/lib/auth";
 import crypto from "crypto";
 
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Google OAuth credentials are not configured on the server.")}`);
     }
 
-    // 1. Exchange code for access token
+    // 1. Exchange code for access token directly with Google
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -59,68 +59,85 @@ export async function GET(req: NextRequest) {
     const displayName = googleUser.name || googleUser.email.split("@")[0];
     const picture = googleUser.picture || "";
 
-    // 3. Find or create user in Supabase / PostgreSQL
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [{ googleId }, { email }],
-      },
-      include: { profile: true },
-    });
+    // 3. Find or create user directly in Supabase
+    let user: any = null;
+    let profile: any = null;
 
-    if (user) {
+    // Search by googleId or email
+    const { data: existingUsers } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`googleId.eq.${googleId},email.eq.${email}`);
+
+    if (existingUsers && existingUsers.length > 0) {
+      user = existingUsers[0];
+      profile = Array.isArray(user.profile) ? user.profile[0] : user.profile;
+
       const updateData: any = {};
       if (!user.googleId) updateData.googleId = googleId;
       if (!user.email) updateData.email = email;
 
       if (Object.keys(updateData).length > 0) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: updateData,
-          include: { profile: true },
-        });
+        const { data: updated } = await supabaseServer
+          .from("User")
+          .update(withUpdatedTimestamp(updateData))
+          .eq("id", user.id)
+          .select()
+          .single();
+        if (updated) user = { ...user, ...updated };
       }
     } else {
       const hash = crypto.createHash("sha256").update(`google:${googleId}`).digest("hex");
       const userIdentifier = `usr_${hash.slice(0, 16)}`;
+      const newUserId = crypto.randomUUID();
 
-      let finalAddress = userIdentifier;
-      let collision = await prisma.user.findUnique({ where: { walletAddress: finalAddress } });
-      let counter = 0;
-      while (collision) {
-        counter++;
-        const newHash = crypto.createHash("sha256").update(`google:${googleId}:${counter}`).digest("hex");
-        finalAddress = `usr_${newHash.slice(0, 16)}`;
-        collision = await prisma.user.findUnique({ where: { walletAddress: finalAddress } });
+      const { data: newUser, error: userErr } = await supabaseServer
+        .from("User")
+        .insert(
+          withTimestamps({
+            id: newUserId,
+            googleId,
+            email,
+            walletAddress: userIdentifier,
+          })
+        )
+        .select()
+        .single();
+
+      if (userErr || !newUser) {
+        console.error("User creation error:", userErr);
+        return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Failed to create user profile in database.")}`);
       }
+      user = newUser;
 
       const baseUsername = `g_${displayName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 12)}`;
       let finalUsername = baseUsername;
-      let usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
-      while (usernameCollision) {
+
+      const { data: usernameCollision } = await supabaseServer
+        .from("Profile")
+        .select("id")
+        .eq("username", finalUsername)
+        .maybeSingle();
+
+      if (usernameCollision) {
         finalUsername = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
-        usernameCollision = await prisma.profile.findUnique({ where: { username: finalUsername } });
       }
 
-      user = await prisma.user.create({
-        data: {
-          googleId,
-          email,
-          walletAddress: finalAddress,
-          profile: {
-            create: {
-              username: finalUsername,
-              displayName,
-              avatarUrl: picture,
-              bio: "Pulse Creator",
-            },
-          },
-        },
-        include: { profile: true },
-      });
-    }
+      const { data: newProfile } = await supabaseServer
+        .from("Profile")
+        .insert(
+          withTimestamps({
+            userId: user.id,
+            username: finalUsername,
+            displayName,
+            avatarUrl: picture,
+            bio: "Pulse Creator",
+          })
+        )
+        .select()
+        .single();
 
-    if (!user || !user.profile) {
-      return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent("Failed to establish account profile.")}`);
+      profile = newProfile;
     }
 
     // 4. Sign JWT session and set secure cookie
@@ -128,7 +145,7 @@ export async function GET(req: NextRequest) {
 
     const response = NextResponse.redirect(`${origin}/feed`);
     response.cookies.set("block_social_jwt", token, {
-      httpOnly: false, // Accessible to client & server
+      httpOnly: false,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 30 * 24 * 60 * 60,

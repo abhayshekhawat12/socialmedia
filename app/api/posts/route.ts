@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -10,94 +10,62 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "20", 10);
 
-    const where: any = {};
-    if (authorAddress) {
-      // Allow searching by walletAddress or user ID or email
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { walletAddress: authorAddress },
-            { id: authorAddress },
-            { email: authorAddress },
-          ],
-        },
-      });
+    let query = supabaseServer
+      .from("Post")
+      .select(`
+        *,
+        likes:Like(userAddress),
+        savedPosts:SavedPost(userAddress),
+        comments:Comment(id, authorAddress, content, createdAt)
+      `)
+      .order("createdAt", { ascending: false })
+      .range((page - 1) * limit, page * limit);
 
-      if (user) {
-        where.OR = [
-          { authorAddress: user.walletAddress || "" },
-          { authorAddress: user.id },
-          { authorAddress },
-        ];
-      } else {
-        where.authorAddress = authorAddress;
-      }
+    if (authorAddress) {
+      query = query.eq("authorAddress", authorAddress);
     }
 
-    const posts = await prisma.post.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * limit,
-      take: limit + 1,
-      include: {
-        likes: {
-          select: { userAddress: true },
-        },
-        savedPosts: {
-          select: { userAddress: true },
-        },
-        comments: {
-          take: 10,
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            authorAddress: true,
-            content: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
+    const { data: posts, error } = await query;
 
-    const hasMore = posts.length > limit;
-    const paginatedPosts = hasMore ? posts.slice(0, limit) : posts;
+    if (error) {
+      console.error("Supabase fetch posts error:", error);
+      throw new Error(error.message);
+    }
 
-    // Collect all author addresses from posts & comments
+    const postList = posts || [];
+    const hasMore = postList.length > limit;
+    const paginatedPosts = hasMore ? postList.slice(0, limit) : postList;
+
+    // Collect all author addresses
     const authorIdentifiers = Array.from(
       new Set([
-        ...paginatedPosts.map((p) => p.authorAddress.toLowerCase()),
-        ...paginatedPosts.flatMap((p) => p.comments.map((c) => c.authorAddress.toLowerCase())),
+        ...paginatedPosts.map((p) => (p.authorAddress || "").toLowerCase()),
+        ...paginatedPosts.flatMap((p) => (p.comments || []).map((c: any) => (c.authorAddress || "").toLowerCase())),
       ])
-    );
+    ).filter(Boolean);
 
-    // Fetch user profiles for all matching identifiers (walletAddress, id, email)
-    const profiles = authorIdentifiers.length > 0
-      ? await prisma.profile.findMany({
-          where: {
-            OR: [
-              { user: { walletAddress: { in: authorIdentifiers } } },
-              { user: { id: { in: authorIdentifiers } } },
-              { user: { email: { in: authorIdentifiers } } },
-            ],
-          },
-          select: {
-            username: true,
-            displayName: true,
-            avatarUrl: true,
-            user: { select: { walletAddress: true, id: true, email: true } },
-          },
-        })
-      : [];
+    // Fetch user profiles for all authors
+    let profiles: any[] = [];
+    if (authorIdentifiers.length > 0) {
+      const { data: profileData } = await supabaseServer
+        .from("Profile")
+        .select("*, user:User(*)");
+      profiles = profileData || [];
+    }
 
     const profileMap = new Map<string, any>();
     for (const p of profiles) {
-      if (p.user.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
-      if (p.user.id) profileMap.set(p.user.id.toLowerCase(), p);
-      if (p.user.email) profileMap.set(p.user.email.toLowerCase(), p);
+      if (p.user) {
+        if (p.user.walletAddress) profileMap.set(p.user.walletAddress.toLowerCase(), p);
+        if (p.user.id) profileMap.set(p.user.id.toLowerCase(), p);
+        if (p.user.email) profileMap.set(p.user.email.toLowerCase(), p);
+      }
+      if (p.userId) profileMap.set(p.userId.toLowerCase(), p);
+      if (p.username) profileMap.set(p.username.toLowerCase(), p);
     }
 
     const enrichedPosts = paginatedPosts.map((post) => {
-      const authorKey = post.authorAddress.toLowerCase();
+      const authorKey = (post.authorAddress || "").toLowerCase();
       const authorProf = profileMap.get(authorKey);
 
       return {
@@ -107,8 +75,8 @@ export async function GET(req: NextRequest) {
           displayName: `Creator ${authorKey.slice(0, 6)}`,
           avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${authorKey}`,
         },
-        comments: post.comments.map((c) => {
-          const commentAuthorKey = c.authorAddress.toLowerCase();
+        comments: (post.comments || []).map((c: any) => {
+          const commentAuthorKey = (c.authorAddress || "").toLowerCase();
           const commentProf = profileMap.get(commentAuthorKey);
           return {
             ...c,
@@ -156,39 +124,51 @@ export async function POST(req: NextRequest) {
 
     const normalizedAuthor = authorAddress.toLowerCase();
 
-    // Ensure user exists (check by walletAddress, id, or email)
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { walletAddress: normalizedAuthor },
-          { id: normalizedAuthor },
-          { email: normalizedAuthor },
-        ],
-      },
-      include: { profile: true },
-    });
+    // Ensure user exists
+    let user: any = null;
+    let profile: any = null;
 
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
+    const { data: existingUser } = await supabaseServer
+      .from("User")
+      .select("*, profile:Profile(*)")
+      .or(`walletAddress.eq.${normalizedAuthor},id.eq.${normalizedAuthor},email.eq.${normalizedAuthor}`)
+      .maybeSingle();
+
+    if (existingUser) {
+      user = existingUser;
+      profile = Array.isArray(existingUser.profile) ? existingUser.profile[0] : existingUser.profile;
+    } else {
+      const newUserId = crypto.randomUUID();
+      const { data: newUser } = await supabaseServer
+        .from("User")
+        .insert({
+          id: newUserId,
           walletAddress: normalizedAuthor,
-          profile: {
-            create: {
-              username: `user_${normalizedAuthor.slice(0, 8)}`,
-              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
-            },
-          },
-        },
-        include: { profile: true },
-      });
+        })
+        .select()
+        .single();
+
+      if (newUser) {
+        user = newUser;
+        const { data: newProfile } = await supabaseServer
+          .from("Profile")
+          .insert({
+            userId: newUser.id,
+            username: `user_${normalizedAuthor.slice(0, 8)}`,
+            displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+          })
+          .select()
+          .single();
+        profile = newProfile;
+      }
     }
 
-    // Unify authorAddress with the user's primary walletAddress or id
-    const finalAuthorAddress = user.walletAddress || user.id || normalizedAuthor;
+    const finalAuthorAddress = user?.walletAddress || user?.id || normalizedAuthor;
 
-    // Create post in database
-    const post = await prisma.post.create({
-      data: {
+    // Create post in Supabase
+    const { data: post, error: postErr } = await supabaseServer
+      .from("Post")
+      .insert({
         ...(id && { id }),
         authorAddress: finalAuthorAddress,
         caption,
@@ -197,33 +177,19 @@ export async function POST(req: NextRequest) {
         mediaType,
         location,
         privacy,
-      },
-    });
+      })
+      .select()
+      .single();
 
-    // Parse and update Hashtags
-    if (caption) {
-      const hashtags = caption.match(/#[a-zA-Z0-9_]+/g);
-      if (hashtags) {
-        for (const tagRaw of hashtags) {
-          const tag = tagRaw.toLowerCase();
-          try {
-            await prisma.hashtag.upsert({
-              where: { tag },
-              create: { tag, postCount: 1 },
-              update: { postCount: { increment: 1 } },
-            });
-          } catch (e) {
-            console.warn("Hashtag upsert error:", e);
-          }
-        }
-      }
+    if (postErr || !post) {
+      throw new Error(postErr?.message || "Failed to create post");
     }
 
     return NextResponse.json({
       success: true,
       post: {
         ...post,
-        authorProfile: user.profile,
+        authorProfile: profile,
       },
     });
   } catch (error: any) {
