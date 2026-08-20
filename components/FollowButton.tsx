@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserPlus, UserCheck, Loader2 } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 
@@ -13,6 +13,24 @@ export const FollowButton: React.FC<FollowButtonProps> = ({ targetAddress, initi
   const { account } = useAuth();
   const [following, setFollowing] = useState(initialFollowing);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!account || !targetAddress || account.toLowerCase() === targetAddress.toLowerCase()) return;
+
+    fetch(`/api/users/follow?followerId=${encodeURIComponent(account)}&followingId=${encodeURIComponent(targetAddress)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (mounted && data.success) {
+          setFollowing(Boolean(data.isFollowing));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      mounted = false;
+    };
+  }, [account, targetAddress]);
 
   if (account && account.toLowerCase() === targetAddress.toLowerCase()) {
     return null;
@@ -31,14 +49,14 @@ export const FollowButton: React.FC<FollowButtonProps> = ({ targetAddress, initi
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          followerAddress: account,
-          followingAddress: targetAddress,
+          followerId: account,
+          followingId: targetAddress,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setFollowing(data.isFollowing);
+        setFollowing(Boolean(data.isFollowing));
       }
     } catch (err) {
       console.error(err);

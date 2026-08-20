@@ -13,12 +13,17 @@ import {
   Bookmark, 
   Check, 
   Send, 
-  Loader2 
+  Loader2,
+  ShieldCheck,
+  Coins
 } from "lucide-react";
 import { CommentSection } from "../../../components/CommentSection";
 import { useAuth } from "../../../lib/authContext";
 import { audioHaptics } from "../../../lib/audioHaptics";
 import { GlassToast } from "../../../components/ui/GlassToast";
+import { BlockchainVerificationModal, ProofDetails } from "../../../components/BlockchainVerificationModal";
+import { TipCreatorModal } from "../../../components/TipCreatorModal";
+import { ConnectWalletModal } from "../../../components/ConnectWalletModal";
 
 export default function PostDetailsPage() {
   const params = useParams();
@@ -66,6 +71,21 @@ export default function PostDetailsPage() {
   const authorUsername = post.authorProfile?.username || `user_${post.authorAddress.slice(0, 8)}`;
   const avatarUrl = post.authorProfile?.avatarUrl;
 
+  const isOwnPost = account && account.toLowerCase() === post.authorAddress?.toLowerCase();
+
+  const [isProofModalOpen, setIsProofModalOpen] = useState(false);
+  const [isTipModalOpen, setIsTipModalOpen] = useState(false);
+  const [isConnectWalletModalOpen, setIsConnectWalletModalOpen] = useState(false);
+
+  let isVerified = false;
+  let parsedProof: ProofDetails | null = null;
+  if (post.mediaCid && post.mediaCid.startsWith("{") && post.mediaCid.includes('"verified":true')) {
+    try {
+      parsedProof = JSON.parse(post.mediaCid);
+      isVerified = true;
+    } catch {}
+  }
+
   const handleShare = () => {
     audioHaptics.playTap();
     navigator.clipboard.writeText(window.location.href);
@@ -100,7 +120,7 @@ export default function PostDetailsPage() {
         {/* Details & Comments Column */}
         <div className="lg:col-span-5 space-y-4">
           <div className="p-6 rounded-[32px] glass-card border border-white/80 dark:border-white/10 shadow-glass space-y-4">
-            {/* Author */}
+            {/* Author Header */}
             <div className="flex items-center justify-between">
               <Link href={`/profile/${post.authorAddress}`} className="flex items-center gap-3 group">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#00B7FF] to-[#7EDBE8] p-0.5 group-hover:scale-105 transition-transform overflow-hidden shrink-0 shadow-sm">
@@ -119,17 +139,48 @@ export default function PostDetailsPage() {
                       <Check className="w-2 h-2 stroke-[3]" />
                     </span>
                   </h4>
-                  <p className="text-xs text-slate-400 font-bold">@{authorUsername}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs text-slate-400 font-bold">@{authorUsername}</p>
+                    {isVerified && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          audioHaptics.playTap();
+                          setIsProofModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-[9px] font-black hover:bg-emerald-500/20 transition cursor-pointer btn-tactile"
+                      >
+                        <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
+                        <span>Verified</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </Link>
 
-              <button
-                onClick={handleShare}
-                className="p-2 rounded-full glass-pill text-slate-500 hover:text-slate-900 dark:hover:text-white btn-tactile cursor-pointer"
-                title="Share"
-              >
-                <Share2 className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                {post.authorAddress?.startsWith("0x") && !isOwnPost && (
+                  <button
+                    onClick={() => {
+                      audioHaptics.playTap();
+                      setIsTipModalOpen(true);
+                    }}
+                    className="p-2 rounded-full glass-pill text-purple-600 dark:text-purple-300 hover:bg-purple-500/10 btn-tactile cursor-pointer"
+                    title="Tip Creator"
+                  >
+                    <Coins className="w-4 h-4 text-purple-400" />
+                  </button>
+                )}
+
+                <button
+                  onClick={handleShare}
+                  className="p-2 rounded-full glass-pill text-slate-500 hover:text-slate-900 dark:hover:text-white btn-tactile cursor-pointer"
+                  title="Share"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Caption */}
@@ -158,6 +209,34 @@ export default function PostDetailsPage() {
           </div>
         </div>
       </div>
+
+      {/* Blockchain Verification Modal */}
+      {isVerified && (
+        <BlockchainVerificationModal
+          isOpen={isProofModalOpen}
+          onClose={() => setIsProofModalOpen(false)}
+          proof={parsedProof}
+          postCaption={post.caption}
+        />
+      )}
+
+      {/* Tip Creator Modal */}
+      {post.authorAddress?.startsWith("0x") && (
+        <TipCreatorModal
+          isOpen={isTipModalOpen}
+          onClose={() => setIsTipModalOpen(false)}
+          creatorAddress={post.authorAddress}
+          creatorName={authorDisplayName}
+          creatorAvatar={avatarUrl}
+          onOpenConnectWallet={() => setIsConnectWalletModalOpen(true)}
+        />
+      )}
+
+      {/* Connect Wallet Modal */}
+      <ConnectWalletModal
+        isOpen={isConnectWalletModalOpen}
+        onClose={() => setIsConnectWalletModalOpen(false)}
+      />
     </div>
   );
 }

@@ -13,13 +13,21 @@ import {
   Sparkles,
   MessageCircle,
   UserPlus,
-  UserCheck
+  UserCheck,
+  ShieldCheck,
+  Coins,
+  Phone,
+  Video
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../lib/authContext";
+import { useMetaMask } from "../lib/web3/web3Context";
 import { audioHaptics } from "../lib/audioHaptics";
+import { callService } from "../lib/services/callService";
 import { GlassModal } from "./ui/GlassModal";
+import { TipCreatorModal } from "./TipCreatorModal";
+import { ConnectWalletModal } from "./ConnectWalletModal";
 import { resolveMediaUrl, handleImageFallback } from "../lib/mediaHelper";
 
 interface ProfileHeaderProps {
@@ -68,17 +76,71 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
   // Chat State
   const [isStartingChat, setIsStartingChat] = useState(false);
 
+  // Blockchain Creator State
+  const [verifiedContentCount, setVerifiedContentCount] = useState<number>(0);
+  const [isTipModalOpen, setIsTipModalOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const currentLoggedInUser = authUser?.walletAddress || authUser?.id || account;
-  const isOwnProfile = currentLoggedInUser && (
-    currentLoggedInUser.toLowerCase() === user.walletAddress?.toLowerCase() ||
-    currentLoggedInUser.toLowerCase() === user.profile?.username?.toLowerCase()
-  );
+  const currentLoggedInUser = authUser?.id || account || authUser?.walletAddress;
+  const userAliases = [user.walletAddress?.toLowerCase(), user.profile?.username?.toLowerCase()].filter(Boolean);
+  const authAliases = [
+    authUser?.id?.toLowerCase(),
+    account?.toLowerCase(),
+    authUser?.walletAddress?.toLowerCase(),
+    authUser?.profile?.username?.toLowerCase(),
+  ].filter(Boolean);
+  const isOwnProfile = Boolean(authAliases.some((alias) => userAliases.includes(alias)));
 
   useEffect(() => {
     setLocalFollowersCount(stats.followersCount);
   }, [stats.followersCount]);
+
+  // Fetch true DB follow state on mount / user change
+  useEffect(() => {
+    let mounted = true;
+    if (!currentLoggedInUser || isOwnProfile) return;
+
+    const target = user.walletAddress || user.profile?.username;
+    if (!target) return;
+
+    fetch(`/api/users/follow?followerId=${encodeURIComponent(currentLoggedInUser)}&followingId=${encodeURIComponent(target)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (mounted && data.success) {
+          setIsFollowing(Boolean(data.isFollowing));
+          if (data.followersCount !== undefined) {
+            setLocalFollowersCount(data.followersCount);
+          }
+        }
+      })
+      .catch((err) => console.warn("Failed to check follow status:", err));
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentLoggedInUser, user.walletAddress, user.profile?.username, isOwnProfile]);
+
+  useEffect(() => {
+    let mounted = true;
+    const targetAddr = user.walletAddress;
+    if (targetAddr && targetAddr.startsWith("0x")) {
+      fetch(`/api/blockchain/proof?creatorAddress=${encodeURIComponent(targetAddr)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (mounted && data.registeredCount !== undefined) {
+            setVerifiedContentCount(data.registeredCount);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setVerifiedContentCount(0);
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [user.walletAddress]);
 
   const handleOpenEdit = () => {
     setDisplayName(user.profile?.displayName || "");
@@ -182,22 +244,23 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
     try {
       setIsFollowLoading(true);
       audioHaptics.playTap();
-      const nextFollow = !isFollowing;
-      setIsFollowing(nextFollow);
-      setLocalFollowersCount((prev) => nextFollow ? prev + 1 : Math.max(0, prev - 1));
+      const target = user.walletAddress || user.profile?.username;
 
       const res = await fetch("/api/users/follow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          followerAddress: currentLoggedInUser,
-          followingAddress: user.walletAddress,
+          followerId: currentLoggedInUser,
+          followingId: target,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setIsFollowing(data.isFollowing);
+        setIsFollowing(Boolean(data.isFollowing));
+        if (data.followersCount !== undefined) {
+          setLocalFollowersCount(data.followersCount);
+        }
       }
     } catch (e) {
       console.error("Follow error:", e);
@@ -296,6 +359,15 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">@{displayUsername}</p>
+
+              {/* Blockchain Verified Creator Badge (Only if verified on blockchain) */}
+              {verifiedContentCount > 0 && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 mt-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-black">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>✓ Blockchain Verified Creator</span>
+                  <span className="text-slate-400 font-bold">• {verifiedContentCount} Registered</span>
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}
@@ -355,6 +427,56 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
                     {isStartingChat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5 text-[#00B7FF]" />}
                     <span>Message</span>
                   </button>
+
+                  {/* Audio Call */}
+                  <button
+                    onClick={() => {
+                      audioHaptics.playTap();
+                      callService.startCall(
+                        user.profile?.displayName || user.profile?.username || "Pulse Member",
+                        user.profile?.avatarUrl || "",
+                        "voice",
+                        user.walletAddress || user.profile?.username
+                      );
+                    }}
+                    className="p-2 glass-pill text-[#00B7FF] rounded-2xl hover:bg-cyan-500/10 transition btn-tactile cursor-pointer"
+                    title="Start Voice Call"
+                  >
+                    <Phone className="w-4 h-4" />
+                  </button>
+
+                  {/* Video Call */}
+                  <button
+                    onClick={() => {
+                      audioHaptics.playTap();
+                      callService.startCall(
+                        user.profile?.displayName || user.profile?.username || "Pulse Member",
+                        user.profile?.avatarUrl || "",
+                        "video",
+                        user.walletAddress || user.profile?.username
+                      );
+                    }}
+                    className="p-2 glass-pill text-[#00B7FF] rounded-2xl hover:bg-cyan-500/10 transition btn-tactile cursor-pointer"
+                    title="Start Video Call"
+                  >
+                    <Video className="w-4 h-4" />
+                  </button>
+
+                  {/* Creator Tipping Button */}
+                  {user.walletAddress?.startsWith("0x") && (
+                    <button
+                      onClick={() => {
+                        audioHaptics.playTap();
+                        setIsTipModalOpen(true);
+                      }}
+                      className="px-3.5 py-2 glass-pill bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-300 text-xs font-black rounded-2xl transition btn-tactile flex items-center gap-1.5 cursor-pointer border border-purple-500/20"
+                      title="Tip Creator"
+                    >
+                      <Coins className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Tip</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={handleCopyLink}
                     className="p-2 glass-pill text-slate-700 dark:text-slate-200 rounded-2xl transition btn-tactile cursor-pointer"
@@ -500,6 +622,27 @@ export function ProfileHeader({ user, stats, onProfileUpdated }: ProfileHeaderPr
           </div>
         </form>
       </GlassModal>
+
+      {/* Tip Creator Modal */}
+      {user.walletAddress && (
+        <TipCreatorModal
+          isOpen={isTipModalOpen}
+          onClose={() => setIsTipModalOpen(false)}
+          creatorAddress={user.walletAddress}
+          creatorName={mainName}
+          creatorAvatar={currentAvatar}
+          onOpenConnectWallet={() => setIsConnectModalOpen(true)}
+        />
+      )}
+
+      {/* Connect Wallet Modal */}
+      <ConnectWalletModal
+        isOpen={isConnectModalOpen}
+        onClose={() => setIsConnectModalOpen(false)}
+        onSuccess={() => {
+          if (refreshProfile) refreshProfile();
+        }}
+      />
     </div>
   );
 }

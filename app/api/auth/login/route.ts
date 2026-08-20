@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
 import { signAuthToken } from "@/lib/auth";
-import crypto from "crypto";
+import { resolveOrCreateUser, normalizeEmail } from "@/lib/userResolver";
 
 export const dynamic = "force-dynamic";
 
@@ -14,56 +13,18 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanIdent = identifier.trim().toLowerCase();
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanIdent);
 
-    // Find user by email, mobileNumber, walletAddress, or id
-    let user: any = null;
-    let profile: any = null;
+    // Enforce centralized identity resolution
+    const { user, profile } = await resolveOrCreateUser({
+      email: isEmail ? cleanIdent : null,
+      userId: !isEmail && !cleanIdent.startsWith("0x") ? cleanIdent : null,
+      walletAddress: cleanIdent.startsWith("0x") ? cleanIdent : null,
+      displayName: cleanIdent.split("@")[0],
+    });
 
-    const { data: existingUser } = await supabaseServer
-      .from("User")
-      .select("*, profile:Profile(*)")
-      .or(`email.eq.${cleanIdent},mobileNumber.eq.${cleanIdent},walletAddress.eq.${cleanIdent},id.eq.${cleanIdent}`)
-      .maybeSingle();
-
-    if (existingUser) {
-      user = existingUser;
-      profile = Array.isArray(existingUser.profile) ? existingUser.profile[0] : existingUser.profile;
-    } else {
-      // Create user and profile seamlessly
-      const hash = crypto.createHash("sha256").update(cleanIdent).digest("hex");
-      const generatedAddress = `usr_${hash.slice(0, 16)}`;
-      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanIdent);
-      const isMobile = /^\+?[0-9]{7,15}$/.test(cleanIdent);
-      const newUserId = crypto.randomUUID();
-
-      const { data: newUser, error: userErr } = await supabaseServer
-        .from("User")
-        .insert({
-          id: newUserId,
-          walletAddress: generatedAddress,
-          email: isEmail ? cleanIdent : null,
-          mobileNumber: isMobile ? cleanIdent : null,
-        })
-        .select()
-        .single();
-
-      if (userErr || !newUser) {
-        throw new Error(userErr?.message || "Failed to create user in database");
-      }
-      user = newUser;
-
-      const { data: newProfile } = await supabaseServer
-        .from("Profile")
-        .insert({
-          userId: newUser.id,
-          username: `user_${generatedAddress.slice(4, 12)}`,
-          displayName: cleanIdent.split("@")[0],
-          avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${generatedAddress}`,
-          bio: "Pulse Mobile Creator",
-        })
-        .select()
-        .single();
-      profile = newProfile;
+    if (!user) {
+      return NextResponse.json({ error: "Failed to authenticate" }, { status: 500 });
     }
 
     const token = signAuthToken(user.id, user.walletAddress || user.id);

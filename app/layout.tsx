@@ -3,9 +3,11 @@ import React from "react";
 import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "../lib/themeContext";
 import { AuthProvider } from "../lib/authContext";
+import { Web3Provider } from "../lib/web3/web3Context";
 import { SettingsProvider } from "../lib/settingsContext";
 import { PWAProvider } from "../components/PWAProvider";
 import { AuthGuard } from "../components/AuthGuard";
+import { CallListenerProvider } from "../components/CallListenerProvider";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -57,13 +59,17 @@ export default function RootLayout({
 
         <ThemeProvider>
           <AuthProvider>
-            <SettingsProvider>
-              <PWAProvider>
-                <AuthGuard>
-                  {children}
-                </AuthGuard>
-              </PWAProvider>
-            </SettingsProvider>
+            <Web3Provider>
+              <SettingsProvider>
+                <PWAProvider>
+                  <AuthGuard>
+                    <CallListenerProvider>
+                      {children}
+                    </CallListenerProvider>
+                  </AuthGuard>
+                </PWAProvider>
+              </SettingsProvider>
+            </Web3Provider>
           </AuthProvider>
         </ThemeProvider>
       </body>

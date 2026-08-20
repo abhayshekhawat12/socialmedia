@@ -20,15 +20,12 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get("block_social_jwt")?.value;
   const isAuthenticated = Boolean(token && token.length > 10);
 
-  // 2. Starting Root Route `/`
+  // 2. Starting Root Route `/` -> Redirect to `/feed` (main app canvas)
   if (pathname === "/") {
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/feed", request.url));
-    }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL("/feed", request.url));
   }
 
-  // 3. Prevent logged-in users from seeing /login
+  // 3. Prevent already logged-in users from seeing /login
   if (pathname === "/login") {
     if (isAuthenticated) {
       return NextResponse.redirect(new URL("/feed", request.url));
@@ -36,13 +33,28 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 4. OAuth callback route is public
-  if (pathname.startsWith("/auth/callback")) {
+  // 4. Public Social Routes (browseable by everyone without being blocked)
+  const isPublicRoute =
+    pathname.startsWith("/feed") ||
+    pathname.startsWith("/pulse") ||
+    pathname.startsWith("/explore") ||
+    pathname.startsWith("/trending") ||
+    pathname.startsWith("/profile") ||
+    pathname.startsWith("/post") ||
+    pathname.startsWith("/snap") ||
+    pathname.startsWith("/community") ||
+    pathname.startsWith("/development") ||
+    pathname.startsWith("/hiring") ||
+    pathname.startsWith("/camera") ||
+    pathname.startsWith("/create") ||
+    pathname.startsWith("/auth/callback");
+
+  if (isPublicRoute) {
     return NextResponse.next();
   }
 
-  // 5. Protected Routes: Require active authentication
-  if (!isAuthenticated) {
+  // 5. Private User Routes (require authentication)
+  if (!isAuthenticated && (pathname.startsWith("/chats") || pathname.startsWith("/settings") || pathname.startsWith("/dashboard") || pathname.startsWith("/notifications"))) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }

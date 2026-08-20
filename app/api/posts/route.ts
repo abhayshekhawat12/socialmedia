@@ -23,7 +23,31 @@ export async function GET(req: NextRequest) {
       .range((page - 1) * limit, page * limit);
 
     if (authorAddress) {
-      query = query.eq("authorAddress", authorAddress);
+      // Resolve all potential aliases for this author (user.id, user.walletAddress, profile.username, authorAddress)
+      const { data: matchedUser } = await supabaseServer
+        .from("User")
+        .select("id, walletAddress, profile:Profile(username)")
+        .or(`id.eq.${authorAddress},walletAddress.eq.${authorAddress},email.eq.${authorAddress}`)
+        .maybeSingle();
+
+      const matchedProfile = matchedUser?.profile
+        ? (Array.isArray(matchedUser.profile) ? matchedUser.profile[0] : matchedUser.profile)
+        : null;
+
+      const authorAliases = Array.from(
+        new Set([
+          authorAddress,
+          matchedUser?.id?.toLowerCase(),
+          matchedUser?.walletAddress?.toLowerCase(),
+          matchedProfile?.username?.toLowerCase(),
+        ].filter(Boolean) as string[])
+      );
+
+      if (authorAliases.length > 1) {
+        query = query.in("authorAddress", authorAliases);
+      } else {
+        query = query.eq("authorAddress", authorAddress);
+      }
     }
 
     const { data: posts, error } = await query;
@@ -145,7 +169,8 @@ export async function POST(req: NextRequest) {
         .insert(
           withTimestamps({
             id: newUserId,
-            walletAddress: normalizedAuthor,
+            walletAddress: normalizedAuthor.startsWith("0x") ? normalizedAuthor : null,
+            email: normalizedAuthor.includes("@") ? normalizedAuthor : null,
           })
         )
         .select()
@@ -158,8 +183,8 @@ export async function POST(req: NextRequest) {
           .insert(
             withTimestamps({
               userId: newUser.id,
-              username: `user_${normalizedAuthor.slice(0, 8)}`,
-              displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+              username: `user_${newUser.id.slice(0, 8)}`,
+              displayName: `User ${newUser.id.slice(0, 6)}`,
             })
           )
           .select()
@@ -168,7 +193,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const finalAuthorAddress = user?.walletAddress || user?.id || normalizedAuthor;
+    // Always prioritize the primary App User ID
+    const finalAuthorAddress = user?.id || normalizedAuthor;
 
     // Create post in Supabase with guaranteed UUID and timestamps!
     const { data: post, error: postErr } = await supabaseServer

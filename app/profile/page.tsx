@@ -21,12 +21,17 @@ import {
   UploadCloud, 
   Film,
   Briefcase,
-  Settings
+  Settings,
+  Link2,
+  Unlink,
+  ShieldCheck
 } from 'lucide-react';
 import { audioHaptics } from '../../lib/audioHaptics';
 import { ProfileHeader } from '../../components/ProfileHeader';
 import { GlassModal } from '../../components/ui/GlassModal';
 import { GlassLoader } from '../../components/ui/GlassLoader';
+import { ConnectWalletModal } from '../../components/ConnectWalletModal';
+import { useMetaMask } from '../../lib/web3/web3Context';
 import { resolveMediaUrl, handleImageFallback } from '../../lib/mediaHelper';
 
 interface ProfileData {
@@ -43,6 +48,16 @@ export default function ProfilePage() {
   const router = useRouter();
   const params = useParams();
   const { account } = useAuth();
+  const { 
+    walletAddress, 
+    shortAddress, 
+    isWalletConnected, 
+    isRpcConnected,
+    balance,
+    latestBlock,
+    disconnectMetaMask, 
+    calculateSha256 
+  } = useMetaMask();
 
   const addressParam = params?.address as string | undefined;
   const targetAddress = addressParam?.toLowerCase() || account?.toLowerCase();
@@ -64,7 +79,9 @@ export default function ProfilePage() {
   const [savedReels, setSavedReels] = useState<any[]>([]);
 
   const [isOptionsMenuOpen, setIsOptionsMenuOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [registeredNotice, setRegisteredNotice] = useState<string | null>(null);
   
   // Direct Create Post / Reel Modal states
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -96,7 +113,12 @@ export default function ProfilePage() {
       const postsRes = await fetch(`/api/posts?authorAddress=${targetAddress}`);
       if (postsRes.ok) {
         const postsData = await postsRes.json();
-        setUserPosts(postsData.posts || []);
+        const incomingPosts = postsData.posts || [];
+        setUserPosts(incomingPosts);
+        setStats((prev) => ({
+          ...prev,
+          postsCount: Math.max(prev.postsCount, incomingPosts.length),
+        }));
       }
 
       // 3. Fetch User's short videos (reels)
@@ -182,6 +204,13 @@ export default function ProfilePage() {
       const mediaUrl = uploadData.url;
       const authorAddr = account || targetAddress || '';
 
+      let createdId: string | null = null;
+      let contentHash: string = "";
+
+      if (isWalletConnected && walletAddress) {
+        contentHash = await calculateSha256(`${mediaUrl}-${caption}-${walletAddress}-${Date.now()}`);
+      }
+
       if (createContentType === 'reel') {
         const pulseRes = await fetch("/api/pulse", {
           method: "POST",
@@ -198,6 +227,8 @@ export default function ProfilePage() {
         });
 
         if (!pulseRes.ok) throw new Error("Failed to save Reel to database.");
+        const pulseData = await pulseRes.json();
+        createdId = pulseData.pulse?.id;
       } else {
         const postRes = await fetch("/api/posts", {
           method: "POST",
@@ -213,14 +244,38 @@ export default function ProfilePage() {
         });
 
         if (!postRes.ok) throw new Error("Failed to save Post to database.");
+        const postData = await postRes.json();
+        createdId = postData.post?.id;
+      }
+
+      // Register ownership on blockchain if wallet is connected
+      if (isWalletConnected && walletAddress && createdId && contentHash) {
+        try {
+          await fetch("/api/blockchain/proof", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              postId: createdId,
+              contentHash,
+              authorWallet: walletAddress,
+              network: "Ethereum Sepolia Testnet",
+            }),
+          });
+          setRegisteredNotice("✓ Ownership Registered on Blockchain");
+        } catch (proofErr) {
+          console.warn("Proof registration error:", proofErr);
+        }
       }
 
       await fetchProfileDetails();
-      setIsCreateModalOpen(false);
-      setSelectedFile(null);
-      setPreviewUrl(null);
-      setCaption("");
-      setLocation("");
+      setTimeout(() => {
+        setIsCreateModalOpen(false);
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        setCaption("");
+        setLocation("");
+        setRegisteredNotice(null);
+      }, registeredNotice ? 1200 : 200);
     } catch (err: any) {
       console.error("Publish error:", err);
       setUploadError(err.message || "Failed to publish content.");
@@ -275,6 +330,57 @@ export default function ProfilePage() {
 
             {isOptionsMenuOpen && (
               <div className="absolute right-0 top-10 z-40 w-52 rounded-2xl glass-panel border border-slate-200 dark:border-slate-800 shadow-2xl p-1.5 space-y-1 animate-in zoom-in-95 text-xs font-bold">
+                {/* MetaMask Connect / Disconnect Entry Point */}
+                {isOwnProfile && (
+                  <>
+                    {!isWalletConnected ? (
+                      <button
+                        onClick={() => {
+                          audioHaptics.playTap();
+                          setIsOptionsMenuOpen(false);
+                          setIsConnectModalOpen(true);
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-2.5 text-[#00B7FF] hover:bg-cyan-500/10 transition-colors cursor-pointer"
+                      >
+                        <Link2 className="w-4 h-4" />
+                        <span>Connect MetaMask</span>
+                      </button>
+                    ) : (
+                      <>
+                        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800/80 mb-1">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-emerald-500 font-bold text-[11px]">
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Wallet Connected</span>
+                            </div>
+                            {isRpcConnected && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" title="Sepolia RPC Active" />
+                            )}
+                          </div>
+                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">{shortAddress}</p>
+                          {balance !== null && (
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
+                              {balance} Sepolia ETH
+                            </p>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            audioHaptics.playTap();
+                            setIsOptionsMenuOpen(false);
+                            disconnectMetaMask();
+                          }}
+                          className="w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-2.5 text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        >
+                          <Unlink className="w-4 h-4" />
+                          <span>Disconnect Wallet</span>
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+
                 <Link
                   href="/hiring"
                   onClick={() => setIsOptionsMenuOpen(false)}
@@ -694,6 +800,24 @@ export default function ProfilePage() {
               </div>
             )}
 
+            {/* Blockchain Ownership Status Indicator (Only if wallet connected) */}
+            {isWalletConnected && walletAddress && (
+              <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-[11px] font-bold flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#00B7FF]" />
+                  <span>Blockchain Content Registration Active</span>
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">{shortAddress}</span>
+              </div>
+            )}
+
+            {registeredNotice && (
+              <div className="p-2.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold flex items-center gap-1.5 animate-fadeIn">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>{registeredNotice}</span>
+              </div>
+            )}
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -712,6 +836,13 @@ export default function ProfilePage() {
           </form>
         </div>
       </GlassModal>
+
+      {/* Connect Wallet Modal */}
+      <ConnectWalletModal
+        isOpen={isConnectModalOpen}
+        onClose={() => setIsConnectModalOpen(false)}
+        onSuccess={fetchProfileDetails}
+      />
     </div>
   );
 }

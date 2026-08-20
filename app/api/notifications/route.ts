@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+import { supabaseServer, withCreatedAt } from "@/lib/supabaseServer";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -12,10 +13,26 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User address is required" }, { status: 400 });
     }
 
+    // Resolve user aliases to catch all notifications
+    const { data: userRecord } = await supabaseServer
+      .from("User")
+      .select("id, walletAddress, email, profile:Profile(username)")
+      .or(`id.eq.${userAddress},walletAddress.eq.${userAddress},email.eq.${userAddress}`)
+      .maybeSingle();
+
+    const targetAliases = Array.from(
+      new Set([
+        userAddress,
+        userRecord?.id?.toLowerCase(),
+        userRecord?.walletAddress?.toLowerCase(),
+        userRecord?.email?.toLowerCase(),
+      ].filter(Boolean) as string[])
+    );
+
     const { data: notifications, error } = await supabaseServer
       .from("Notification")
       .select("*")
-      .eq("recipientAddress", userAddress)
+      .in("recipientAddress", targetAliases)
       .order("createdAt", { ascending: false })
       .limit(40);
 
@@ -74,7 +91,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { data: notif, error } = await supabaseServer.from("Notification").insert(
-      withTimestamps({
+      withCreatedAt({
+        id: crypto.randomUUID(),
         recipientAddress: recipientAddress.toLowerCase(),
         senderAddress: (senderAddress || "system").toLowerCase(),
         type: type || "INFO",

@@ -13,11 +13,16 @@ import {
   Loader2,
   Trash2,
   MapPin,
-  Sparkles
+  Sparkles,
+  ShieldCheck,
+  Coins
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
 import { audioHaptics } from "../lib/audioHaptics";
 import { GlassModal } from "./ui/GlassModal";
+import { BlockchainVerificationModal, ProofDetails } from "./BlockchainVerificationModal";
+import { TipCreatorModal } from "./TipCreatorModal";
+import { ConnectWalletModal } from "./ConnectWalletModal";
 import { resolveMediaUrl, handleImageFallback } from "../lib/mediaHelper";
 import { formatRelativeTime } from "../lib/formatTime";
 
@@ -57,7 +62,7 @@ export interface PostCardProps {
 }
 
 function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
-  const { account } = useAuth();
+  const { account, token, profile } = useAuth();
   const [liked, setLiked] = useState<boolean>(() => {
     if (!account || !post.likes) return false;
     return post.likes.some((l) => l.userAddress.toLowerCase() === account.toLowerCase());
@@ -84,6 +89,20 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
   const [commentCount, setCommentCount] = useState(post.commentCount || 0);
   const [newComment, setNewComment] = useState("");
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+
+  // Blockchain Modals & Proof state
+  const [isProofModalOpen, setIsProofModalOpen] = useState(false);
+  const [isTipModalOpen, setIsTipModalOpen] = useState(false);
+  const [isConnectWalletModalOpen, setIsConnectWalletModalOpen] = useState(false);
+
+  let isVerified = false;
+  let parsedProof: ProofDetails | null = null;
+  if (post.mediaCid && post.mediaCid.startsWith("{") && post.mediaCid.includes('"verified":true')) {
+    try {
+      parsedProof = JSON.parse(post.mediaCid);
+      isVerified = true;
+    } catch {}
+  }
 
   const isOwnPost = account && account.toLowerCase() === post.authorAddress.toLowerCase();
   const authorDisplayName = post.authorProfile?.displayName || `User ${post.authorAddress.slice(0, 6)}`;
@@ -116,9 +135,12 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
     }
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch(`/api/posts/${post.id}/like`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ userAddress: account }),
       });
       if (res.ok) {
@@ -153,9 +175,12 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
     setSaved(nextSaved);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       await fetch("/api/saved", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           userAddress: account,
           targetId: post.id,
@@ -196,8 +221,12 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
       setIsDeleting(true);
       audioHaptics.playTap();
 
-      const res = await fetch(`/api/posts/${post.id}?userAddress=${account}`, {
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/posts/${post.id}?userAddress=${encodeURIComponent(account)}`, {
         method: "DELETE",
+        headers,
       });
 
       if (res.ok) {
@@ -214,47 +243,101 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim() || isSubmittingComment) return;
+    const commentText = newComment.trim();
+    if (!commentText || isSubmittingComment) return;
 
     if (!account) {
       window.location.href = "/login";
       return;
     }
 
+    audioHaptics.playSend();
+
+    // Optimistic comment insert
+    const tempId = `temp_${Date.now()}`;
+    const optimistic = {
+      id: tempId,
+      authorAddress: account,
+      content: commentText,
+      createdAt: new Date().toISOString(),
+      authorProfile: {
+        username: profile?.username || "you",
+        displayName: profile?.displayName || "You",
+        avatarUrl: profile?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${account}`,
+      },
+    };
+
+    setCommentsList((prev) => [optimistic, ...prev]);
+    setCommentCount((prev) => prev + 1);
+    setNewComment("");
+
     try {
       setIsSubmittingComment(true);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch(`/api/posts/${post.id}/comments`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           authorAddress: account,
-          content: newComment.trim(),
+          content: commentText,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setCommentsList((prev) => [data.comment, ...prev]);
-        setCommentCount(data.commentCount || commentsList.length + 1);
-        setNewComment("");
+        if (data.comment) {
+          setCommentsList((prev) => prev.map((c) => (c.id === tempId ? data.comment : c)));
+          if (data.commentCount !== undefined) setCommentCount(data.commentCount);
+        }
+      } else {
+        // Rollback
+        setCommentsList((prev) => prev.filter((c) => c.id !== tempId));
+        setCommentCount((prev) => Math.max(0, prev - 1));
       }
     } catch (err) {
       console.error("Comment submit error:", err);
+      setCommentsList((prev) => prev.filter((c) => c.id !== tempId));
+      setCommentCount((prev) => Math.max(0, prev - 1));
     } finally {
       setIsSubmittingComment(false);
     }
   };
 
+  // Fetch latest comments when comments drawer opens
+  React.useEffect(() => {
+    let mounted = true;
+    if (isCommentsOpen) {
+      fetch(`/api/posts/${post.id}/comments`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (mounted && data.comments) {
+            setCommentsList(data.comments);
+            if (data.count !== undefined) setCommentCount(data.count);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [isCommentsOpen, post.id]);
+
   const handleDeleteComment = async (commentId: string) => {
     if (!account) return;
+    audioHaptics.playTap();
+    setCommentsList((prev) => prev.filter((c) => c.id !== commentId));
+    setCommentCount((prev) => Math.max(0, prev - 1));
+
     try {
-      const res = await fetch(`/api/posts/${post.id}/comments/${commentId}?userAddress=${account}`, {
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      await fetch(`/api/posts/${post.id}/comments/${commentId}?userAddress=${encodeURIComponent(account)}`, {
         method: "DELETE",
+        headers,
       });
-      if (res.ok) {
-        setCommentsList((prev) => prev.filter((c) => c.id !== commentId));
-        setCommentCount((prev) => Math.max(0, prev - 1));
-      }
     } catch (err) {
       console.error("Delete comment error:", err);
     }
@@ -278,7 +361,7 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
           </Link>
 
           <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1.5 cursor-pointer">
+            <div className="flex items-center gap-1.5 cursor-pointer flex-wrap">
               <Link
                 href={`/profile/${post.authorAddress}`}
                 className="text-xs font-black text-slate-900 dark:text-white truncate hover:underline"
@@ -288,6 +371,23 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
               <span className="w-3.5 h-3.5 rounded-full bg-gradient-to-r from-[#00B7FF] to-[#7EDBE8] text-slate-950 flex items-center justify-center shrink-0">
                 <Check className="w-2 h-2 stroke-[3]" />
               </span>
+
+              {/* Subtle Blockchain Verified Badge (Only if verified on blockchain) */}
+              {isVerified && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    audioHaptics.playTap();
+                    setIsProofModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-[9px] font-black hover:bg-emerald-500/20 transition cursor-pointer btn-tactile"
+                  title="View On-Chain Verification Proof"
+                >
+                  <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
+                  <span>Verified</span>
+                </button>
+              )}
+
               <span className="text-slate-400 text-[10px] ml-0.5 font-medium">
                 • {formatTime(post.createdAt)}
               </span>
@@ -400,6 +500,20 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
             <MessageSquare className="w-5 h-5 stroke-[2.2]" />
           </button>
 
+          {/* Tip Creator (Only if creator has wallet address and not own post) */}
+          {post.authorAddress?.startsWith("0x") && !isOwnPost && (
+            <button
+              onClick={() => {
+                audioHaptics.playTap();
+                setIsTipModalOpen(true);
+              }}
+              className="p-2 rounded-full glass-action-btn text-slate-600 dark:text-slate-300 hover:text-purple-400 transition cursor-pointer"
+              title="Tip Creator"
+            >
+              <Coins className="w-5 h-5 stroke-[2.2]" />
+            </button>
+          )}
+
           {/* Share */}
           <button
             onClick={handleShare}
@@ -490,19 +604,37 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
             </form>
 
             {/* List of comments */}
-            <div className="space-y-2 max-h-48 overflow-y-auto hide-scrollbar pr-1">
+            <div className="space-y-2.5 max-h-52 overflow-y-auto hide-scrollbar pr-1">
               {commentsList.length === 0 ? (
                 <p className="text-xs text-slate-400 py-1">No comments yet. Be the first to comment!</p>
               ) : (
                 commentsList.map((c) => {
-                  const isMyComment = account && c.authorAddress.toLowerCase() === account.toLowerCase();
+                  const isMyComment = account && c.authorAddress?.toLowerCase() === account.toLowerCase();
+                  const authorName = c.authorProfile?.displayName || (c.authorAddress?.startsWith("0x") ? `User ${c.authorAddress.slice(0, 6)}` : "Pulse Member");
+                  const authorAvatar = c.authorProfile?.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(c.authorAddress || c.id)}`;
+                  const authorHandle = c.authorProfile?.username ? `@${c.authorProfile.username}` : "";
+
                   return (
                     <div key={c.id} className="flex items-start justify-between gap-2 text-xs leading-snug group/comment">
-                      <div>
-                        <span className="font-black text-slate-900 dark:text-white mr-1.5">
-                          {c.authorProfile?.displayName || `User ${c.authorAddress.slice(0, 6)}`}
-                        </span>
-                        <span className="text-slate-600 dark:text-slate-300 font-medium">{c.content}</span>
+                      <div className="flex items-start gap-2 min-w-0">
+                        <img
+                          src={authorAvatar}
+                          alt={authorName}
+                          className="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5 bg-slate-200 dark:bg-slate-800"
+                        />
+                        <div className="min-w-0">
+                          <span className="font-black text-slate-900 dark:text-white mr-1.5 hover:underline cursor-pointer">
+                            {authorName}
+                          </span>
+                          {authorHandle && (
+                            <span className="text-[10px] text-slate-400 font-mono mr-1.5">
+                              {authorHandle}
+                            </span>
+                          )}
+                          <span className="text-slate-700 dark:text-slate-200 font-medium break-words">
+                            {c.content}
+                          </span>
+                        </div>
                       </div>
                       {isMyComment && (
                         <button
@@ -561,6 +693,34 @@ function PostCardComponent({ post, onPostDeleted }: PostCardProps) {
           </div>
         </div>
       </GlassModal>
+
+      {/* Blockchain Verification Modal */}
+      {isVerified && (
+        <BlockchainVerificationModal
+          isOpen={isProofModalOpen}
+          onClose={() => setIsProofModalOpen(false)}
+          proof={parsedProof}
+          postCaption={post.caption}
+        />
+      )}
+
+      {/* Tip Creator Modal */}
+      {post.authorAddress?.startsWith("0x") && (
+        <TipCreatorModal
+          isOpen={isTipModalOpen}
+          onClose={() => setIsTipModalOpen(false)}
+          creatorAddress={post.authorAddress}
+          creatorName={authorDisplayName}
+          creatorAvatar={avatarUrl}
+          onOpenConnectWallet={() => setIsConnectWalletModalOpen(true)}
+        />
+      )}
+
+      {/* Connect Wallet Modal */}
+      <ConnectWalletModal
+        isOpen={isConnectWalletModalOpen}
+        onClose={() => setIsConnectWalletModalOpen(false)}
+      />
     </article>
   );
 }

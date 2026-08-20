@@ -30,7 +30,31 @@ export async function GET(req: NextRequest) {
     }
 
     if (author) {
-      query = query.eq("authorAddress", author);
+      // Resolve all potential aliases for this author (user.id, user.walletAddress, profile.username, author)
+      const { data: matchedUser } = await supabaseServer
+        .from("User")
+        .select("id, walletAddress, profile:Profile(username)")
+        .or(`id.eq.${author},walletAddress.eq.${author},email.eq.${author}`)
+        .maybeSingle();
+
+      const matchedProfile = matchedUser?.profile
+        ? (Array.isArray(matchedUser.profile) ? matchedUser.profile[0] : matchedUser.profile)
+        : null;
+
+      const authorAliases = Array.from(
+        new Set([
+          author,
+          matchedUser?.id?.toLowerCase(),
+          matchedUser?.walletAddress?.toLowerCase(),
+          matchedProfile?.username?.toLowerCase(),
+        ].filter(Boolean) as string[])
+      );
+
+      if (authorAliases.length > 1) {
+        query = query.in("authorAddress", authorAliases);
+      } else {
+        query = query.eq("authorAddress", author);
+      }
     }
 
     const { data: pulses, error } = await query;
@@ -145,7 +169,8 @@ export async function POST(req: NextRequest) {
         .insert(
           withTimestamps({
             id: newUserId,
-            walletAddress: normalizedAuthor,
+            walletAddress: normalizedAuthor.startsWith("0x") ? normalizedAuthor : null,
+            email: normalizedAuthor.includes("@") ? normalizedAuthor : null,
           })
         )
         .select()
@@ -156,14 +181,15 @@ export async function POST(req: NextRequest) {
         await supabaseServer.from("Profile").insert(
           withTimestamps({
             userId: newUser.id,
-            username: `user_${normalizedAuthor.slice(0, 8)}`,
-            displayName: `User ${normalizedAuthor.slice(0, 6)}`,
+            username: `user_${newUser.id.slice(0, 8)}`,
+            displayName: `User ${newUser.id.slice(0, 6)}`,
           })
         );
       }
     }
 
-    const finalAuthorAddress = user?.walletAddress || user?.id || normalizedAuthor;
+    // Always prioritize the primary App User ID
+    const finalAuthorAddress = user?.id || normalizedAuthor;
     const pulseScore = Math.floor(Math.random() * 15) + 85;
 
     const { data: newPulse, error: pulseErr } = await supabaseServer

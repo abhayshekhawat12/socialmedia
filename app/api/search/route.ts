@@ -30,17 +30,19 @@ export async function GET(req: NextRequest) {
         .limit(20);
 
       const formattedAccounts = (topProfiles || []).map((p) => {
-        const address = p.user?.walletAddress || p.userId || p.user?.id;
+        const canonicalId = p.userId || p.user?.id;
+        const address = p.user?.walletAddress || canonicalId;
         return {
-          id: p.userId || p.user?.id,
+          id: canonicalId,
+          userId: canonicalId,
           walletAddress: address,
           address,
-          name: p.displayName || p.username,
-          displayName: p.displayName || p.username,
+          name: p.displayName || p.username || "Pulse Creator",
+          displayName: p.displayName || p.username || "Pulse Creator",
           username: p.username || `user_${(address || "").slice(0, 6)}`,
           handle: `@${p.username || (address || "").slice(0, 6)}`,
-          avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${address}`,
-          avatarUrl: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${address}`,
+          avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${canonicalId || address}`,
+          avatarUrl: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${canonicalId || address}`,
           bio: p.bio,
           followers: `${p.followersCount || 0}`,
           followersCount: p.followersCount || 0,
@@ -97,17 +99,19 @@ export async function GET(req: NextRequest) {
     }
 
     const formattedUsers = Array.from(mergedProfiles.values()).map((p) => {
-      const address = p.user?.walletAddress || p.userId || p.user?.id || p.id;
+      const canonicalId = p.userId || p.user?.id || p.id;
+      const address = p.user?.walletAddress || canonicalId;
       return {
-        id: p.userId || p.user?.id,
+        id: canonicalId,
+        userId: canonicalId,
         walletAddress: address,
         address,
-        name: p.displayName || p.username,
-        displayName: p.displayName || p.username,
+        name: p.displayName || p.username || "Pulse Creator",
+        displayName: p.displayName || p.username || "Pulse Creator",
         username: p.username || `user_${(address || "").slice(0, 6)}`,
         handle: `@${p.username || (address || "").slice(0, 6)}`,
-        avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${address}`,
-        avatarUrl: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${address}`,
+        avatar: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${canonicalId || address}`,
+        avatarUrl: p.avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${canonicalId || address}`,
         bio: p.bio,
         followers: `${p.followersCount || 0}`,
         followersCount: p.followersCount || 0,

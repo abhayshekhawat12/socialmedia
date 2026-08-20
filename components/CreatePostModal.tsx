@@ -14,9 +14,12 @@ import {
   ChevronLeft, 
   Type,
   Volume2,
-  AlertCircle
+  AlertCircle,
+  ShieldCheck,
+  Check
 } from "lucide-react";
 import { useAuth } from "../lib/authContext";
+import { useMetaMask } from "../lib/web3/web3Context";
 import { MusicPickerModal, SelectedTrack } from "./MusicPickerModal";
 import { audioHaptics } from "../lib/audioHaptics";
 import { compressImage } from "../lib/imageCompression";
@@ -31,6 +34,7 @@ export function CreatePostModal() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { account, user } = useAuth();
+  const { walletAddress, shortAddress, isWalletConnected, calculateSha256 } = useMetaMask();
 
   // Stepper state: upload -> enhance -> publish
   const [creationStep, setCreationStep] = useState<"upload" | "enhance" | "publish">("upload");
@@ -145,6 +149,13 @@ export function CreatePostModal() {
 
       setStatusMessage("Publishing to feed...");
 
+      let createdId: string | null = null;
+      let contentHash: string = "";
+
+      if (isWalletConnected && walletAddress) {
+        contentHash = await calculateSha256(`${mediaUrl}-${caption}-${walletAddress}-${Date.now()}`);
+      }
+
       if (mediaType === "video") {
         const pulseRes = await fetch("/api/pulse", {
           method: "POST",
@@ -167,9 +178,32 @@ export function CreatePostModal() {
         if (!pulseRes.ok) {
           throw new Error(pulseData.error || "Failed to save short video to database.");
         }
+        createdId = pulseData.pulse?.id;
+
+        // Register ownership on blockchain if wallet is connected
+        if (isWalletConnected && walletAddress && createdId && contentHash) {
+          setStatusMessage("Registering content ownership on blockchain...");
+          try {
+            await fetch("/api/blockchain/proof", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                postId: createdId,
+                contentHash,
+                authorWallet: walletAddress,
+                network: "Ethereum Sepolia Testnet",
+              }),
+            });
+            setStatusMessage("✓ Ownership Registered on Blockchain!");
+          } catch (proofErr) {
+            console.warn("Proof registration error:", proofErr);
+          }
+        }
 
         appCache.clear();
-        router.push("/pulse");
+        setTimeout(() => {
+          router.push("/pulse");
+        }, isWalletConnected ? 600 : 50);
       } else {
         const postRes = await fetch("/api/posts", {
           method: "POST",
@@ -189,12 +223,35 @@ export function CreatePostModal() {
         if (!postRes.ok) {
           throw new Error(postData.error || "Failed to save post to database.");
         }
+        createdId = postData.post?.id;
+
+        // Register ownership on blockchain if wallet is connected
+        if (isWalletConnected && walletAddress && createdId && contentHash) {
+          setStatusMessage("Registering content ownership on blockchain...");
+          try {
+            await fetch("/api/blockchain/proof", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                postId: createdId,
+                contentHash,
+                authorWallet: walletAddress,
+                network: "Ethereum Sepolia Testnet",
+              }),
+            });
+            setStatusMessage("✓ Ownership Registered on Blockchain!");
+          } catch (proofErr) {
+            console.warn("Proof registration error:", proofErr);
+          }
+        }
 
         appCache.clear();
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("pulse_post_created"));
         }
-        router.push("/feed");
+        setTimeout(() => {
+          router.push("/feed");
+        }, isWalletConnected ? 600 : 50);
       }
     } catch (err: any) {
       console.error("[Publish Error]:", err);
@@ -511,6 +568,17 @@ export function CreatePostModal() {
                 >
                   Change
                 </button>
+              </div>
+            )}
+
+            {/* Blockchain Ownership Status Indicator (Only if wallet connected) */}
+            {isWalletConnected && walletAddress && (
+              <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-xs font-bold flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#00B7FF]" />
+                  <span>Blockchain Content Registration Active</span>
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">{shortAddress}</span>
               </div>
             )}
 

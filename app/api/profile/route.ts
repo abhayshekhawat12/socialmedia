@@ -98,16 +98,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     }
 
-    const targetIdentifier = user.walletAddress || user.id;
+    const userIdentifiers = Array.from(
+      new Set([user.id, user.walletAddress, profile.username, user.email].filter(Boolean) as string[])
+    );
 
     const [
       { count: followersCount },
       { count: followingCount },
       { count: postsCount },
     ] = await Promise.all([
-      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).eq("followingAddress", targetIdentifier),
-      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).eq("followerAddress", targetIdentifier),
-      supabaseServer.from("Post").select("*", { count: "exact", head: true }).eq("authorAddress", targetIdentifier),
+      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).in("followingAddress", userIdentifiers),
+      supabaseServer.from("Follow").select("*", { count: "exact", head: true }).in("followerAddress", userIdentifiers),
+      supabaseServer.from("Post").select("*", { count: "exact", head: true }).in("authorAddress", userIdentifiers),
     ]);
 
     return NextResponse.json(

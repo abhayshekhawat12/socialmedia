@@ -31,33 +31,37 @@ export async function GET(
       }
     }
 
-    const effectiveAddress = user?.walletAddress || user?.id || address;
+    const userIdentifiers = Array.from(
+      new Set([user?.id, user?.walletAddress, profile?.username, address].filter(Boolean) as string[])
+    );
 
-    // Fetch Posts
+    const effectiveAddress = user?.id || user?.walletAddress || address;
+
+    // Fetch Posts for all user identifiers
     const { data: posts } = await supabaseServer
       .from("Post")
       .select("*")
-      .eq("authorAddress", effectiveAddress)
+      .in("authorAddress", userIdentifiers)
       .order("createdAt", { ascending: false });
 
-    // Fetch Pulses
+    // Fetch Pulses for all user identifiers
     const { data: pulses } = await supabaseServer
       .from("Pulse")
       .select("*")
-      .eq("authorAddress", effectiveAddress)
+      .in("authorAddress", userIdentifiers)
       .order("createdAt", { ascending: false });
 
     // Fetch Followers count
     const { count: followersCount } = await supabaseServer
       .from("Follow")
       .select("*", { count: "exact", head: true })
-      .eq("followingAddress", effectiveAddress);
+      .in("followingAddress", userIdentifiers);
 
     // Fetch Following count
     const { count: followingCount } = await supabaseServer
       .from("Follow")
       .select("*", { count: "exact", head: true })
-      .eq("followerAddress", effectiveAddress);
+      .in("followerAddress", userIdentifiers);
 
     return NextResponse.json({
       success: true,

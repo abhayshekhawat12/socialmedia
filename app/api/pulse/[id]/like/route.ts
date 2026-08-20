@@ -1,27 +1,82 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer, withTimestamps } from "@/lib/supabaseServer";
+import { supabaseServer, withCreatedAt } from "@/lib/supabaseServer";
+import { verifyAuthToken } from "@/lib/auth";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
+
+async function resolveCanonicalUserId(identifier?: string | null): Promise<string | null> {
+  if (!identifier) return null;
+  const clean = identifier.toLowerCase().trim();
+
+  const { data: user } = await supabaseServer
+    .from("User")
+    .select("id, profile:Profile(username)")
+    .or(`id.eq.${clean},walletAddress.eq.${clean},email.eq.${clean}`)
+    .maybeSingle();
+
+  if (user?.id) return user.id;
+
+  const { data: prof } = await supabaseServer
+    .from("Profile")
+    .select("userId")
+    .eq("username", clean)
+    .maybeSingle();
+
+  if (prof?.userId) return prof.userId;
+
+  return clean;
+}
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const { userAddress } = await req.json();
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("block_social_jwt")?.value;
+    const token = authHeader?.replace("Bearer ", "") || cookieToken;
 
-    if (!userAddress) {
-      return NextResponse.json({ error: "User address required" }, { status: 400 });
+    let authUserId: string | null = null;
+    if (token) {
+      const session = verifyAuthToken(token);
+      if (session?.userId) authUserId = session.userId;
     }
 
-    const normalizedUser = userAddress.toLowerCase();
+    const { userAddress } = await req.json();
+    const rawUser = authUserId || userAddress;
+
+    if (!rawUser) {
+      return NextResponse.json({ error: "User authentication required" }, { status: 400 });
+    }
+
+    const canonicalUserId = await resolveCanonicalUserId(rawUser);
+    if (!canonicalUserId) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
     const pulseId = params.id;
+
+    // Get user aliases
+    const { data: userRecord } = await supabaseServer
+      .from("User")
+      .select("id, walletAddress, email")
+      .eq("id", canonicalUserId)
+      .maybeSingle();
+
+    const userAliases = Array.from(
+      new Set([
+        canonicalUserId,
+        userRecord?.walletAddress?.toLowerCase(),
+        userRecord?.email?.toLowerCase(),
+      ].filter(Boolean) as string[])
+    );
 
     const { data: existingLike } = await supabaseServer
       .from("Like")
       .select("id")
       .eq("pulseId", pulseId)
-      .eq("userAddress", normalizedUser)
+      .in("userAddress", userAliases)
       .maybeSingle();
 
     const { data: currentPulse } = await supabaseServer
@@ -42,23 +97,39 @@ export async function POST(
       return NextResponse.json({ success: true, liked: false, likeCount: newCount });
     } else {
       // Like
-      await supabaseServer.from("Like").insert(
-        withTimestamps({
+      const { error: insErr } = await supabaseServer.from("Like").insert(
+        withCreatedAt({
+          id: crypto.randomUUID(),
           pulseId,
-          userAddress: normalizedUser,
+          userAddress: canonicalUserId,
         })
       );
+
+      if (insErr) {
+        console.error("Pulse like insert error:", insErr);
+        throw new Error(insErr.message);
+      }
+
       const newCount = (currentPulse.likeCount || 0) + 1;
       await supabaseServer.from("Pulse").update({ likeCount: newCount, updatedAt: new Date().toISOString() }).eq("id", pulseId);
 
-      if (currentPulse.authorAddress !== normalizedUser) {
+      if (currentPulse.authorAddress && currentPulse.authorAddress.toLowerCase() !== canonicalUserId.toLowerCase()) {
+        const { data: authorProfile } = await supabaseServer
+          .from("Profile")
+          .select("displayName, username")
+          .eq("userId", canonicalUserId)
+          .maybeSingle();
+
+        const senderName = authorProfile?.displayName || authorProfile?.username || "Someone";
+
         await supabaseServer.from("Notification").insert(
-          withTimestamps({
+          withCreatedAt({
+            id: crypto.randomUUID(),
             recipientAddress: currentPulse.authorAddress,
-            senderAddress: normalizedUser,
+            senderAddress: canonicalUserId,
             type: "LIKE",
             title: "New Like on Reel ❤️",
-            message: `liked your Reel`,
+            message: `${senderName} liked your Reel`,
             link: `/pulse`,
             read: false,
           })
@@ -68,6 +139,7 @@ export async function POST(
       return NextResponse.json({ success: true, liked: true, likeCount: newCount });
     }
   } catch (error: any) {
+    console.error("Pulse like error:", error);
     return NextResponse.json({ error: error.message || "Like action failed" }, { status: 500 });
   }
 }

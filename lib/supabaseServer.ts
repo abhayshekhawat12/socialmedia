@@ -36,6 +36,18 @@ export function withTimestamps<T extends Record<string, any>>(data: T): T & { id
 }
 
 /**
+ * Helper to prepare insert payload for tables with only createdAt (e.g. Message, Follow, ConversationMember)
+ */
+export function withCreatedAt<T extends Record<string, any>>(data: T): T & { id: string; createdAt: string } {
+  const now = new Date().toISOString();
+  return {
+    id: data.id || crypto.randomUUID(),
+    createdAt: data.createdAt || now,
+    ...data,
+  };
+}
+
+/**
  * Helper to prepare update payload with updatedAt timestamp
  */
 export function withUpdatedTimestamp<T extends Record<string, any>>(data: T): T & { updatedAt: string } {

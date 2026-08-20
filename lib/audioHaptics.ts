@@ -149,7 +149,34 @@ class SoundHapticService {
     this.triggerHaptic([20]);
   }
 
-  // 5. Native Vibration Trigger (Mobile Devices)
+  // 5. Receive Message Chime
+  public playReceive() {
+    if (!this.isSoundEnabled) return;
+    try {
+      this.initAudio();
+      if (!this.audioCtx) return;
+
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(750, this.audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1050, this.audioCtx.currentTime + 0.1);
+
+      gain.gain.setValueAtTime(0.07, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.1);
+
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+
+      osc.start();
+      osc.stop(this.audioCtx.currentTime + 0.1);
+    } catch (e) {}
+
+    this.triggerHaptic([15, 10, 15]);
+  }
+
+  // 6. Native Vibration Trigger (Mobile Devices)
   private triggerHaptic(pattern: number[]) {
     if (!this.isHapticsEnabled) return;
     try {

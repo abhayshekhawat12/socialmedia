@@ -94,6 +94,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearErrorNotice = () => setErrorNotice(null);
 
+  // Initialize from cache for 0ms refresh experience
+  useEffect(() => {
+    try {
+      const cachedAccount = localStorage.getItem("pulse_cached_account");
+      const cachedProfile = localStorage.getItem("pulse_cached_profile");
+      const cachedUser = localStorage.getItem("pulse_cached_user");
+      if (cachedAccount) setAccount(cachedAccount);
+      if (cachedProfile) setProfile(JSON.parse(cachedProfile));
+      if (cachedUser) setUser(JSON.parse(cachedUser));
+    } catch {}
+  }, []);
+
   const fetchUserProfile = useCallback(async (identifier: string, userMeta?: any) => {
     if (!identifier) return;
     try {
@@ -109,11 +121,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             bannerUrl: data.profile.bannerUrl || "",
           };
           setProfile(profileData);
+          try { localStorage.setItem("pulse_cached_profile", JSON.stringify(profileData)); } catch {}
         }
         if (data.user) {
           setUser(data.user);
-          const resolvedAccount = data.user.walletAddress || data.user.id || identifier;
+          // Permanent App User ID is the primary identity
+          const resolvedAccount = data.user.id || identifier;
           setAccount(resolvedAccount);
+          try {
+            localStorage.setItem("pulse_cached_user", JSON.stringify(data.user));
+            localStorage.setItem("pulse_cached_account", resolvedAccount);
+          } catch {}
         }
       } else if (res.status === 404 && userMeta) {
         // Auto-provision profile if newly authenticated user is missing DB record
@@ -133,8 +151,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const createData = await createRes.json();
             if (createData.user) {
               setUser(createData.user);
-              setAccount(createData.user.walletAddress || createData.user.id);
+              setAccount(createData.user.id);
               setProfile(createData.user.profile);
+              try {
+                localStorage.setItem("pulse_cached_user", JSON.stringify(createData.user));
+                localStorage.setItem("pulse_cached_profile", JSON.stringify(createData.user.profile));
+                localStorage.setItem("pulse_cached_account", createData.user.id);
+              } catch {}
             }
           }
         } catch (provErr) {
@@ -153,13 +176,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateProfileState = (updated: Partial<ProfileState>) => {
-    setProfile((prev) => (prev ? { ...prev, ...updated } : (updated as ProfileState)));
+    setProfile((prev) => {
+      const next = prev ? { ...prev, ...updated } : (updated as ProfileState);
+      try { localStorage.setItem("pulse_cached_profile", JSON.stringify(next)); } catch {}
+      return next;
+    });
   };
 
   const logout = async () => {
     try {
       await supabase.auth.signOut();
       document.cookie = "block_social_jwt=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+      localStorage.removeItem("pulse_cached_account");
+      localStorage.removeItem("pulse_cached_profile");
+      localStorage.removeItem("pulse_cached_user");
     } catch (err) {
       console.warn("Sign out error:", err);
     }
@@ -201,22 +231,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (match && match[1]) {
             const cookieToken = match[1];
             if (mounted) setToken(cookieToken);
-            // Fetch current user via /api/profile
+            // Fetch current user via /api/profile/me
             const res = await fetch("/api/profile/me");
             if (res.ok) {
               const data = await res.json();
               if (data.user && mounted) {
                 setUser(data.user);
-                setAccount(data.user.walletAddress || data.user.id);
+                setAccount(data.user.id);
                 setProfile(data.profile);
               }
             } else {
               // Clear bad cookie if expired
               document.cookie = "block_social_jwt=; path=/; max-age=0;";
             }
-          } else {
-            // No session and no cookie — user is not authenticated
-            // Do NOT set a fallback account to avoid unnecessary DB calls
           }
         }
       } catch (err) {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
 import { signAuthToken } from "@/lib/auth";
-import crypto from "crypto";
+import { resolveOrCreateUser, normalizeEmail } from "@/lib/userResolver";
 
 export const dynamic = "force-dynamic";
 
@@ -15,76 +14,25 @@ export async function POST(req: NextRequest) {
 
     const cleanIdent = identifier.trim().toLowerCase();
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanIdent);
-    const isMobile = /^\+?[0-9]{7,15}$/.test(cleanIdent);
 
-    // Check existing user
-    const { data: existingUser } = await supabaseServer
-      .from("User")
-      .select("*, profile:Profile(*)")
-      .or(`email.eq.${cleanIdent},mobileNumber.eq.${cleanIdent},walletAddress.eq.${cleanIdent}`)
-      .maybeSingle();
+    // Enforce centralized identity resolution
+    const { user, profile } = await resolveOrCreateUser({
+      email: isEmail ? cleanIdent : null,
+      userId: !isEmail && !cleanIdent.startsWith("0x") ? cleanIdent : null,
+      walletAddress: cleanIdent.startsWith("0x") ? cleanIdent : null,
+      displayName: displayName || cleanIdent.split("@")[0],
+    });
 
-    if (existingUser) {
-      const profile = Array.isArray(existingUser.profile) ? existingUser.profile[0] : existingUser.profile;
-      const token = signAuthToken(existingUser.id, existingUser.walletAddress || existingUser.id);
-      return NextResponse.json({
-        success: true,
-        token,
-        user: { ...existingUser, profile },
-      });
+    if (!user) {
+      throw new Error("Failed to register user");
     }
 
-    const hash = crypto.createHash("sha256").update(cleanIdent).digest("hex");
-    const generatedAddress = `usr_${hash.slice(0, 16)}`;
-    const chosenName = displayName || cleanIdent.split("@")[0];
-    const newUserId = crypto.randomUUID();
-
-    const baseUsername = `u_${chosenName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase().slice(0, 10)}`;
-    let finalUsername = baseUsername || `user_${generatedAddress.slice(4, 10)}`;
-
-    const { data: usernameExists } = await supabaseServer
-      .from("Profile")
-      .select("id")
-      .eq("username", finalUsername)
-      .maybeSingle();
-
-    if (usernameExists) {
-      finalUsername = `${finalUsername}_${Math.floor(100 + Math.random() * 900)}`;
-    }
-
-    const { data: newUser, error: userErr } = await supabaseServer
-      .from("User")
-      .insert({
-        id: newUserId,
-        walletAddress: generatedAddress,
-        email: isEmail ? cleanIdent : null,
-        mobileNumber: isMobile ? cleanIdent : null,
-      })
-      .select()
-      .single();
-
-    if (userErr || !newUser) {
-      throw new Error(userErr?.message || "Failed to register user");
-    }
-
-    const { data: newProfile } = await supabaseServer
-      .from("Profile")
-      .insert({
-        userId: newUser.id,
-        username: finalUsername,
-        displayName: chosenName,
-        avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${generatedAddress}`,
-        bio: "Pulse Creator",
-      })
-      .select()
-      .single();
-
-    const token = signAuthToken(newUser.id, newUser.walletAddress || newUser.id);
+    const token = signAuthToken(user.id, user.walletAddress || user.id);
 
     const response = NextResponse.json({
       success: true,
       token,
-      user: { ...newUser, profile: newProfile },
+      user: { ...user, profile },
     });
 
     response.cookies.set("block_social_jwt", token, {
