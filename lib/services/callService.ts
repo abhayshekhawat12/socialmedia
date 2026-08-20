@@ -27,10 +27,16 @@ export interface CallState {
   hasPermissionError?: boolean;
 }
 
-// Normalize channel name safely
+// Helper to normalize user channel name safely
 export function callChannelName(identifier: string) {
   const clean = (identifier || "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "_");
   return `call_sig_${clean || "anon"}`;
+}
+
+// Shared Call Session Room channel
+export function callRoomChannelName(callId: string) {
+  const clean = (callId || "").toLowerCase().trim().replace(/[^a-z0-9_]/g, "_");
+  return `call_room_${clean}`;
 }
 
 const RTC_CONFIG: RTCConfiguration = {
@@ -41,6 +47,7 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export class CallService {
@@ -63,7 +70,8 @@ export class CallService {
   private myAvatarUrl: string = "";
 
   // Supabase channels
-  private subscribedChannels: any[] = [];
+  private personalChannels: any[] = [];
+  private activeRoomChannel: any = null;
 
   private state: CallState = {
     id: "",
@@ -123,95 +131,102 @@ export class CallService {
     this.myAliases = allAliases;
 
     if (!isSame) {
-      this.subscribeToMyChannels();
+      this.subscribeToPersonalChannels();
     }
   }
 
-  // ─── Realtime Channel Subscriptions ────────────────────────────────
+  // ─── Personal Realtime Channel Subscriptions (for incoming calls) ───
 
-  private subscribeToMyChannels() {
-    // Unsubscribe from previous channels
-    this.subscribedChannels.forEach((ch) => {
+  private subscribeToPersonalChannels() {
+    this.personalChannels.forEach((ch) => {
       try {
         supabase.removeChannel(ch);
       } catch {}
     });
-    this.subscribedChannels = [];
+    this.personalChannels = [];
 
     if (this.myAliases.length === 0) return;
 
-    // Listen on each alias channel
     this.myAliases.forEach((alias) => {
       const channelName = callChannelName(alias);
       const ch = supabase
         .channel(channelName)
         .on("broadcast", { event: "incoming_call" }, ({ payload }: any) => {
           if (this.state.status !== "idle") return; // Busy
-          // Don't receive our own call
+          // Don't ring self
           if (payload.callerId && this.myAliases.includes(payload.callerId.toLowerCase())) return;
           this._handleIncomingCallSignal(payload);
         })
-        .on("broadcast", { event: "call_accepted" }, ({ payload }: any) => {
-          if (this.state.id === payload.callId && (this.state.status === "calling" || this.state.status === "connecting")) {
-            this._handleRemoteAccept(payload);
-          }
-        })
-        .on("broadcast", { event: "call_rejected" }, ({ payload }: any) => {
-          if (this.state.id === payload.callId) {
-            this._handleRemoteReject();
-          }
-        })
-        .on("broadcast", { event: "call_ended" }, ({ payload }: any) => {
-          if (this.state.id === payload.callId) {
-            this._handleRemoteEnd();
-          }
-        })
-        .on("broadcast", { event: "sdp_offer" }, async ({ payload }: any) => {
-          if (this.state.id === payload.callId) {
-            await this._handleRemoteOffer(payload.sdp);
-          }
-        })
-        .on("broadcast", { event: "sdp_answer" }, async ({ payload }: any) => {
-          if (this.state.id === payload.callId) {
-            await this._handleRemoteAnswer(payload.sdp);
-          }
-        })
-        .on("broadcast", { event: "ice_candidate" }, async ({ payload }: any) => {
-          if (this.state.id === payload.callId && payload.candidate) {
-            await this._handleRemoteIceCandidate(payload.candidate);
-          }
-        })
         .subscribe();
 
-      this.subscribedChannels.push(ch);
+      this.personalChannels.push(ch);
     });
   }
 
-  // ─── Send Realtime Broadcast Signal ────────────────────────────────
+  // ─── Join Shared Call Room Channel ─────────────────────────────────
 
-  private async sendSignal(
-    receiverIdentifier: string,
-    event: string,
-    payload: Record<string, any>
-  ) {
-    if (!receiverIdentifier) return;
+  private joinCallRoom(callId: string) {
+    if (this.activeRoomChannel) {
+      try {
+        supabase.removeChannel(this.activeRoomChannel);
+      } catch {}
+      this.activeRoomChannel = null;
+    }
+
+    const roomName = callRoomChannelName(callId);
+    const room = supabase.channel(roomName);
+
+    room
+      .on("broadcast", { event: "call_accepted" }, ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId) {
+          this._handleRemoteAccept();
+        }
+      })
+      .on("broadcast", { event: "call_rejected" }, ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId) {
+          this._handleRemoteReject();
+        }
+      })
+      .on("broadcast", { event: "call_ended" }, ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId) {
+          this._handleRemoteEnd();
+        }
+      })
+      .on("broadcast", { event: "sdp_offer" }, async ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId && payload.sdp) {
+          await this._handleRemoteOffer(payload.sdp);
+        }
+      })
+      .on("broadcast", { event: "sdp_answer" }, async ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId && payload.sdp) {
+          await this._handleRemoteAnswer(payload.sdp);
+        }
+      })
+      .on("broadcast", { event: "ice_candidate" }, async ({ payload }: any) => {
+        if (payload.senderId && payload.senderId !== this.myUserId && payload.candidate) {
+          await this._handleRemoteIceCandidate(payload.candidate);
+        }
+      })
+      .subscribe();
+
+    this.activeRoomChannel = room;
+  }
+
+  // Send message inside active shared call room
+  private broadcastInRoom(event: string, payload: Record<string, any>) {
+    if (!this.activeRoomChannel) return;
     try {
-      const channelName = callChannelName(receiverIdentifier);
-      const ch = supabase.channel(channelName);
-      await new Promise<void>((resolve) => {
-        ch.subscribe((status: string) => {
-          if (status === "SUBSCRIBED") {
-            ch.send({ type: "broadcast", event, payload }).finally(() => {
-              setTimeout(() => {
-                supabase.removeChannel(ch);
-                resolve();
-              }, 400);
-            });
-          }
-        });
+      this.activeRoomChannel.send({
+        type: "broadcast",
+        event,
+        payload: {
+          ...payload,
+          callId: this.state.id,
+          senderId: this.myUserId,
+        },
       });
     } catch (err) {
-      console.warn(`[CallService] sendSignal '${event}' failed:`, err);
+      console.warn(`[CallService] broadcastInRoom '${event}' error:`, err);
     }
   }
 
@@ -246,20 +261,39 @@ export class CallService {
     };
     this.notify();
 
-    // Start outgoing dial tone ("tring-tring")
+    // 1. Join the shared room
+    this.joinCallRoom(callId);
+
+    // 2. Start outgoing dial tone
     this.startCallerDialTone();
 
-    // Acquire local microphone / camera
+    // 3. Acquire local audio/video media
     await this.acquireLocalMedia(type);
 
-    // Send incoming_call signal to target contact
+    // 4. Send incoming_call invitation to recipient's personal channel
     if (contactAddress && this.myUserId) {
-      await this.sendSignal(contactAddress, "incoming_call", {
-        callId,
-        callerId: this.myUserId,
-        callerName: this.myDisplayName,
-        callerAvatar: this.myAvatarUrl,
-        callType: type,
+      const recipientChannel = callChannelName(contactAddress);
+      const ch = supabase.channel(recipientChannel);
+      ch.subscribe((status: string) => {
+        if (status === "SUBSCRIBED") {
+          ch.send({
+            type: "broadcast",
+            event: "incoming_call",
+            payload: {
+              callId,
+              callerId: this.myUserId,
+              callerName: this.myDisplayName,
+              callerAvatar: this.myAvatarUrl,
+              callType: type,
+            },
+          }).finally(() => {
+            setTimeout(() => {
+              try {
+                supabase.removeChannel(ch);
+              } catch {}
+            }, 600);
+          });
+        }
       });
     }
 
@@ -281,8 +315,10 @@ export class CallService {
     this.cleanupStream();
     this._clearAllTones();
 
+    const callId = payload.callId || `call_in_${Date.now()}`;
+
     this.state = {
-      id: payload.callId || `call_in_${Date.now()}`,
+      id: callId,
       type: payload.callType || "voice",
       status: "incoming",
       contactName: payload.callerName || "Pulse Member",
@@ -298,6 +334,9 @@ export class CallService {
     };
     this.notify();
 
+    // Join the shared room immediately
+    this.joinCallRoom(callId);
+
     // Play incoming ringtone sound
     this.startIncomingRingtone();
   }
@@ -311,34 +350,25 @@ export class CallService {
     this.state.status = "connecting";
     this.notify();
 
-    // 1. Acquire local media
+    // 1. Acquire local audio/video media
     await this.acquireLocalMedia(this.state.type);
 
     // 2. Setup RTCPeerConnection for Callee
     this.setupPeerConnection();
 
-    // 3. Notify Caller that call was accepted
-    if (this.state.contactAddress && this.myUserId) {
-      await this.sendSignal(this.state.contactAddress, "call_accepted", {
-        callId: this.state.id,
-        acceptedBy: this.myUserId,
-      });
-    }
+    // 3. Broadcast accept in shared room
+    this.broadcastInRoom("call_accepted", {});
   }
 
   // ─── REJECT CALL (Callee) ──────────────────────────────────────────
 
   rejectCall() {
     this.stopIncomingRingtone();
+
+    this.broadcastInRoom("call_rejected", {});
+
     this.cleanupPeer();
     this.cleanupStream();
-
-    if (this.state.contactAddress && this.myUserId) {
-      this.sendSignal(this.state.contactAddress, "call_rejected", {
-        callId: this.state.id,
-        rejectedBy: this.myUserId,
-      });
-    }
 
     this.state.status = "rejected";
     this.notify();
@@ -352,15 +382,11 @@ export class CallService {
 
   endCall() {
     this._clearAllTones();
+
+    this.broadcastInRoom("call_ended", {});
+
     this.cleanupPeer();
     this.cleanupStream();
-
-    if (this.state.contactAddress && this.myUserId) {
-      this.sendSignal(this.state.contactAddress, "call_ended", {
-        callId: this.state.id,
-        endedBy: this.myUserId,
-      });
-    }
 
     this.state.status = "ended";
     this.notify();
@@ -395,22 +421,30 @@ export class CallService {
 
       // Handle incoming remote media tracks
       this.peerConnection.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          this.remoteStream = event.streams[0];
-        } else {
-          if (!this.remoteStream) {
-            this.remoteStream = new MediaStream();
+        try {
+          if (event.streams && event.streams[0]) {
+            this.remoteStream = event.streams[0];
+          } else {
+            if (!this.remoteStream) {
+              this.remoteStream = new MediaStream();
+            }
+            this.remoteStream.addTrack(event.track);
           }
-          this.remoteStream.addTrack(event.track);
+          if (this.remoteStream) {
+            this.remoteStream.getTracks().forEach((t) => {
+              t.enabled = true;
+            });
+          }
+        } catch (err) {
+          console.warn("[WebRTC] ontrack error:", err);
         }
         this.notify();
       };
 
       // Handle ICE Candidates
       this.peerConnection.onicecandidate = (event) => {
-        if (event.candidate && this.state.contactAddress && this.myUserId) {
-          this.sendSignal(this.state.contactAddress, "ice_candidate", {
-            callId: this.state.id,
+        if (event.candidate) {
+          this.broadcastInRoom("ice_candidate", {
             candidate: event.candidate.toJSON(),
           });
         }
@@ -424,7 +458,11 @@ export class CallService {
           this.state.status = "connected";
           this.startTimer();
           this.notify();
-        } else if (connState === "disconnected" || connState === "failed" || connState === "closed") {
+        } else if (
+          connState === "disconnected" ||
+          connState === "failed" ||
+          connState === "closed"
+        ) {
           if (this.state.status === "connected") {
             this.endCall();
           }
@@ -436,7 +474,7 @@ export class CallService {
   }
 
   // Caller receives "call_accepted" -> creates SDP offer
-  private async _handleRemoteAccept(_payload: any) {
+  private async _handleRemoteAccept() {
     this._clearAllTones();
     this.state.status = "connecting";
     this.notify();
@@ -445,7 +483,6 @@ export class CallService {
     this.setupPeerConnection();
 
     if (!this.peerConnection) {
-      // Fallback connected
       this.state.status = "connected";
       this.startTimer();
       this.notify();
@@ -459,15 +496,9 @@ export class CallService {
       });
       await this.peerConnection.setLocalDescription(offer);
 
-      // Send SDP Offer to Callee
-      if (this.state.contactAddress && this.myUserId) {
-        await this.sendSignal(this.state.contactAddress, "sdp_offer", {
-          callId: this.state.id,
-          sdp: offer,
-        });
-      }
+      // Broadcast SDP Offer in shared room
+      this.broadcastInRoom("sdp_offer", { sdp: offer });
 
-      // Mark connected after brief handshake delay
       setTimeout(() => {
         if (this.state.status === "connecting") {
           this.state.status = "connected";
@@ -491,7 +522,9 @@ export class CallService {
     if (!this.peerConnection) return;
 
     try {
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdpOffer));
+      await this.peerConnection.setRemoteDescription(
+        new RTCSessionDescription(sdpOffer)
+      );
 
       // Process any queued ICE candidates
       while (this.iceCandidateQueue.length > 0) {
@@ -504,13 +537,8 @@ export class CallService {
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
 
-      // Send SDP Answer to Caller
-      if (this.state.contactAddress && this.myUserId) {
-        await this.sendSignal(this.state.contactAddress, "sdp_answer", {
-          callId: this.state.id,
-          sdp: answer,
-        });
-      }
+      // Broadcast SDP Answer in shared room
+      this.broadcastInRoom("sdp_answer", { sdp: answer });
 
       this.state.status = "connected";
       this.startTimer();
@@ -527,7 +555,9 @@ export class CallService {
   private async _handleRemoteAnswer(sdpAnswer: RTCSessionDescriptionInit) {
     if (!this.peerConnection) return;
     try {
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdpAnswer));
+      await this.peerConnection.setRemoteDescription(
+        new RTCSessionDescription(sdpAnswer)
+      );
 
       // Process any queued ICE candidates
       while (this.iceCandidateQueue.length > 0) {
@@ -673,10 +703,18 @@ export class CallService {
     try {
       if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
         const constraints: MediaStreamConstraints = {
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
           video:
             type === "video"
-              ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
+              ? {
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  facingMode: "user",
+                }
               : false,
         };
         this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -751,18 +789,24 @@ export class CallService {
       this.peerConnection = null;
     }
     this.iceCandidateQueue = [];
+    if (this.activeRoomChannel) {
+      try {
+        supabase.removeChannel(this.activeRoomChannel);
+      } catch {}
+      this.activeRoomChannel = null;
+    }
   }
 
   destroy() {
     this.cleanupPeer();
     this.cleanupStream();
     this._clearAllTones();
-    this.subscribedChannels.forEach((ch) => {
+    this.personalChannels.forEach((ch) => {
       try {
         supabase.removeChannel(ch);
       } catch {}
     });
-    this.subscribedChannels = [];
+    this.personalChannels = [];
   }
 }
 

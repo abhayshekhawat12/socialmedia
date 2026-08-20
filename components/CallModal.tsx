@@ -15,12 +15,14 @@ import {
   Maximize2, 
   ShieldCheck,
   AlertTriangle,
-  Radio
+  Radio,
+  User
 } from 'lucide-react';
 import { audioHaptics } from '../lib/audioHaptics';
 
 export const CallModal: React.FC = () => {
   const [callState, setCallState] = useState<CallState | null>(null);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -31,38 +33,55 @@ export const CallModal: React.FC = () => {
     });
   }, []);
 
-  // Bind local media stream to local video element
+  // Continuous reactive sync for local/remote video & audio elements
   useEffect(() => {
-    if (callState && callState.type === 'video' && localVideoRef.current) {
-      const stream = callService.getLocalStream();
-      if (stream && localVideoRef.current.srcObject !== stream) {
-        localVideoRef.current.srcObject = stream;
-      }
-    }
-  }, [callState?.type, callState?.status, callState?.isCameraOff]);
-
-  // Bind remote media stream to remote video and audio elements
-  useEffect(() => {
-    if (!callState || callState.status === 'idle') return;
-
-    const rStream = callService.getRemoteStream();
-
-    // Bind to audio element so voice is heard
-    if (remoteAudioRef.current && rStream) {
-      if (remoteAudioRef.current.srcObject !== rStream) {
-        remoteAudioRef.current.srcObject = rStream;
-        remoteAudioRef.current.play().catch(() => {});
-      }
+    if (!callState || callState.status === 'idle') {
+      setHasRemoteVideo(false);
+      return;
     }
 
-    // Bind to video element for video calls
-    if (callState.type === 'video' && remoteVideoRef.current && rStream) {
-      if (remoteVideoRef.current.srcObject !== rStream) {
-        remoteVideoRef.current.srcObject = rStream;
-        remoteVideoRef.current.play().catch(() => {});
+    const syncMediaStreams = () => {
+      const lStream = callService.getLocalStream();
+      const rStream = callService.getRemoteStream();
+
+      // 1. Local Video Element (Mirrored & Muted to prevent echo)
+      if (localVideoRef.current && lStream) {
+        if (localVideoRef.current.srcObject !== lStream) {
+          localVideoRef.current.srcObject = lStream;
+          localVideoRef.current.muted = true;
+          localVideoRef.current.play().catch(() => {});
+        }
       }
-    }
-  }, [callState?.type, callState?.status, callState?.durationSeconds]);
+
+      // 2. Remote Video Element (Unmuted)
+      if (remoteVideoRef.current && rStream) {
+        const videoTracks = rStream.getVideoTracks();
+        const hasActiveVideoTrack = videoTracks.length > 0 && videoTracks[0].enabled;
+        setHasRemoteVideo(hasActiveVideoTrack);
+
+        if (remoteVideoRef.current.srcObject !== rStream) {
+          remoteVideoRef.current.srcObject = rStream;
+          remoteVideoRef.current.muted = false;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      } else {
+        setHasRemoteVideo(false);
+      }
+
+      // 3. Remote Audio Element (Unmuted for voice output)
+      if (remoteAudioRef.current && rStream) {
+        if (remoteAudioRef.current.srcObject !== rStream) {
+          remoteAudioRef.current.srcObject = rStream;
+          remoteAudioRef.current.muted = false;
+          remoteAudioRef.current.play().catch(() => {});
+        }
+      }
+    };
+
+    syncMediaStreams();
+    const interval = setInterval(syncMediaStreams, 350);
+    return () => clearInterval(interval);
+  }, [callState?.status, callState?.type, callState?.isCameraOff, callState?.durationSeconds]);
 
   if (!callState || callState.status === 'idle') return null;
 
@@ -77,7 +96,7 @@ export const CallModal: React.FC = () => {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-lg animate-fadeIn">
         <div className="w-full max-w-sm rounded-[36px] glass-card border border-white/20 p-7 text-center space-y-6 text-white shadow-2xl bg-slate-900/95 relative overflow-hidden">
-          {/* Top glowing ambient pill */}
+          {/* Ambient pill */}
           <div className="flex items-center justify-center gap-1.5 text-xs font-black text-cyan-400 bg-cyan-500/10 py-1.5 px-3 rounded-full w-fit mx-auto border border-cyan-500/20">
             <Radio className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
             <span>Incoming {callState.type === 'video' ? 'HD Video' : 'Voice'} Call</span>
@@ -139,7 +158,7 @@ export const CallModal: React.FC = () => {
   if (callState.isMinimized) {
     return (
       <div className="fixed top-16 right-4 z-[100] p-3 rounded-2xl glass-card bg-slate-900/95 border border-[#00B7FF]/40 shadow-2xl flex items-center gap-3 animate-fadeIn text-white text-xs">
-        {/* Hidden Remote Audio Element */}
+        {/* Hidden Remote Audio Stream */}
         <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
         <img
@@ -186,7 +205,7 @@ export const CallModal: React.FC = () => {
         <div className="flex justify-between items-center text-slate-400">
           <span className="flex items-center gap-1.5 text-xs font-black text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/20">
             <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <span>Encrypted WebRTC {callState.type === 'video' ? 'HD Video' : 'Voice'}</span>
+            <span>Encrypted WebRTC {callState.type === 'video' ? 'Live Video' : 'Live Voice'}</span>
           </span>
           <button
             onClick={() => callService.toggleMinimize()}
@@ -201,24 +220,25 @@ export const CallModal: React.FC = () => {
         {callState.hasPermissionError && (
           <div className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-left text-amber-300 text-[11px]">
             <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-            <span>Microphone/Camera permission restricted in browser.</span>
+            <span>Microphone/Camera access is restricted in your browser.</span>
           </div>
         )}
 
         {/* Video stream container (for Video calls) */}
         {callState.type === 'video' ? (
           <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center shadow-inner">
-            {/* 1. Remote Video (Big Screen) */}
-            {callState.status === 'connected' ? (
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center text-slate-500 space-y-2">
-                <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-[#00B7FF] to-purple-500">
+            {/* 1. Remote Video Screen */}
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className={`w-full h-full object-cover ${hasRemoteVideo && callState.status === 'connected' ? 'block' : 'hidden'}`}
+            />
+
+            {/* Remote Fallback Avatar when connecting or remote camera off */}
+            {(!hasRemoteVideo || callState.status !== 'connected') && (
+              <div className="flex flex-col items-center justify-center text-slate-500 space-y-3 py-6">
+                <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-[#00B7FF] to-purple-500 shadow-xl">
                   <img
                     src={callState.contactAvatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(callState.contactName)}`}
                     alt={callState.contactName}
@@ -226,13 +246,17 @@ export const CallModal: React.FC = () => {
                   />
                 </div>
                 <span className="text-xs font-bold text-slate-400 animate-pulse">
-                  {callState.status === 'calling' ? 'Ringing...' : 'Establishing WebRTC Link...'}
+                  {callState.status === 'calling'
+                    ? 'Ringing remote user...'
+                    : callState.status === 'connecting'
+                    ? 'Connecting WebRTC audio & video...'
+                    : 'Remote camera is off'}
                 </span>
               </div>
             )}
 
             {/* 2. Local Video PiP preview (small corner box) */}
-            <div className="absolute top-3 right-3 w-24 h-32 rounded-xl overflow-hidden bg-slate-900/90 border border-white/20 shadow-lg">
+            <div className="absolute top-3 right-3 w-24 h-32 rounded-xl overflow-hidden bg-slate-900/90 border border-white/20 shadow-lg z-10">
               {!callState.isCameraOff ? (
                 <video
                   ref={localVideoRef}
@@ -250,7 +274,7 @@ export const CallModal: React.FC = () => {
             </div>
 
             {/* Remote contact label */}
-            <div className="absolute bottom-3 left-3 flex items-center gap-2 p-1.5 pr-3 rounded-full bg-black/60 backdrop-blur-md border border-white/10">
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 p-1.5 pr-3 rounded-full bg-black/60 backdrop-blur-md border border-white/10 z-10">
               <img
                 src={callState.contactAvatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(callState.contactName)}`}
                 alt={callState.contactName}
@@ -259,8 +283,8 @@ export const CallModal: React.FC = () => {
               <span className="text-xs font-bold truncate max-w-[100px]">{callState.contactName}</span>
             </div>
 
-            <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-md bg-black/70 text-[10px] font-mono text-emerald-400 border border-white/10">
-              HD 720p P2P
+            <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-md bg-black/70 text-[10px] font-mono text-emerald-400 border border-white/10 z-10">
+              HD WebRTC Live
             </div>
           </div>
         ) : (
@@ -301,11 +325,11 @@ export const CallModal: React.FC = () => {
             {callState.status === 'connected' ? (
               <span className="flex items-center justify-center gap-1.5 text-emerald-400">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                Connected • {formatDuration(callState.durationSeconds)}
+                Live • {formatDuration(callState.durationSeconds)}
               </span>
             ) : (
               <span className="text-cyan-400 animate-pulse">
-                {callState.status === 'calling' ? 'Ringing...' : `${callState.status}...`}
+                {callState.status === 'calling' ? 'Calling...' : `${callState.status}...`}
               </span>
             )}
           </p>
